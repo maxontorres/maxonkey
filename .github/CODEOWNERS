@@ -1,0 +1,10 @@
+# Owner approval is required for every path by default (enforced when the
+# main-branch ruleset enables "Require review from Code Owners").
+* @maxontorres
+
+# Low-risk documentation: lines without an owner remove the requirement, and
+# .github/workflows/pr-policy.yml treats exactly these paths as auto-merge eligible.
+# Use exact paths starting with "/" here.
+/README.md
+/docs/product.md
+/docs/ui-design.md
