@@ -87,7 +87,7 @@ tools described below. If you need a production password manager today, MaxonKey
 | Millennium Blue theme and visible keyboard hints | Implemented and verified | Text labels and selection markers accompany color. |
 | Small-terminal handling | Implemented and verified | The full layout needs 64 columns × 22 rows; smaller windows show resize guidance. |
 | Secrets manager as a complete product | Partially implemented | Only the interface foundation exists. No secret-handling operation works yet. |
-| Encryption and encrypted vault | Planned; not implemented | Task 002 must begin with the security architecture. |
+| Encryption and encrypted vault | Planned; not implemented | Security architecture proposed in Task 002A and awaiting owner approval; see [Spec 002](specs/002-encrypted-vault/spec.md). |
 | Master-passphrase management | Planned; not implemented | There is no password creation, unlock, reset, or recovery workflow. |
 | SQLite vault storage | Provisionally planned; not implemented | SQLite is a possible local database; no database is created or used. |
 | Secret creation, retrieval, updates, and deletion | Planned; not implemented | Sometimes called CRUD; none of these operations is available. |
@@ -521,7 +521,7 @@ maxonkey/
 │   ├── info.rs             Shares truthful About and capability text
 │   └── tui.rs              Screens, keyboard input, theme, and terminal cleanup
 ├── tests/                  CLI, terminal, and commit-validator checks
-├── docs/                   Product, security, UI, and architecture references
+├── docs/                   Product, security, UI, architecture, and decision records (adr/)
 ├── specs/                  Feature requirements, plans, tasks, and evidence
 ├── .github/workflows/      Automated Windows/Linux checks
 ├── .githooks/              Optional local commit-message hook
@@ -535,7 +535,7 @@ maxonkey/
 └── target/                 Generated build files; appears after building
 ```
 
-For implementation details, see [initial architecture](docs/architecture.md).
+For implementation details, see the [architecture](docs/architecture.md).
 For the accepted foundation scope, see the [Task 001 specification](specs/001-project-initialization/spec.md).
 
 ## Configuration and application data
@@ -581,6 +581,11 @@ protects against), cryptography, key custody, passphrase derivation, memory hand
 metadata protection, permissions, backups, and recovery. The authoritative list of
 open decisions is in [security requirements](docs/security.md). Never include real
 credentials in bug reports, test data, screenshots, or documentation examples.
+
+Task 002A proposed answers to these questions: a [threat model](docs/security.md#threat-model),
+a [key custody and storage decision record](docs/adr/0001-key-custody-and-storage.md), and the
+[encrypted vault specification](specs/002-encrypted-vault/spec.md) with its owner-approval
+table. These are designs only; none of them is implemented or protects anything yet.
 
 ## Development setup
 
@@ -789,13 +794,14 @@ that clone's source and build files, so preserve any work you want to keep.
 | --- | --- |
 | Task 001 — Foundation | Complete: Rust binary, CLI, Millennium Blue TUI, specifications, tests, and Windows/Linux CI. |
 | Task 001B — Documentation | This update: comprehensive beginner guide and permanent documentation standards. Application behavior is unchanged. |
-| Task 002 — Encrypted vault | Not started here. Establish the security architecture and acceptance criteria before implementing sensitive storage or passphrase handling. |
+| Task 002A — Vault security architecture | Proposed: threat model, ADR, and specification with acceptance criteria. Awaiting owner approval; no application behavior changed. |
+| Task 002B/002C — Encrypted vault | Not started. Implementation begins only after the owner approves the [decision table](specs/002-encrypted-vault/spec.md#owner-approval-checkpoint). |
 | Later — Organization and secret operations | Planned work requiring its own specifications and verification. |
 | Later — MCP integration | No server yet. Owner-approval boundaries must be designed and enforced before agent credential access. |
 | Later — Sharing and distribution | Secure sharing, precompiled downloads, installers, and broader platform verification require separate work. |
 
 No release dates or production-security guarantees are promised by this roadmap.
-Task 002's open security decisions are tracked in [docs/security.md](docs/security.md).
+Task 002's security decisions awaiting approval are tracked in [Spec 002](specs/002-encrypted-vault/spec.md#owner-approval-checkpoint).
 
 ## Contributing
 
