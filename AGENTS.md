@@ -126,3 +126,25 @@ Before committing, review the staged diff for unnecessary AI attribution, includ
 code comments, documentation, commit text, and any prepared PR description. References
 to tools, shared instructions, or quoted prohibited examples in these rules are not
 self-attribution. Preserve upstream notices in the bundled Spec Kit assets.
+
+## Documentation Standards
+
+All AI coding agents must maintain beginner-friendly, accurate, and comprehensive
+documentation for MaxonKey.
+
+1. Explain features in plain English and define technical terms when introduced.
+2. Assume readers have limited technical knowledge, including unfamiliarity with terminals.
+3. Organize information into logical, clearly labeled sections with navigable links.
+4. Document new user-facing functionality when it is implemented.
+5. Include working examples where applicable; verify commands against the actual code.
+6. Explain prerequisites, hardware guidance, procedural steps, and expected results.
+7. Provide troubleshooting guidance for significant workflows.
+8. Keep documentation synchronized with the codebase and its actual feature status.
+9. Never invent implemented features or successful test results; label unverified
+   instructions, planned capabilities, and estimated requirements explicitly.
+10. Avoid unnecessary duplication. Keep README.md as the primary user/developer
+    entry point and link to authoritative product, security, and design references.
+
+Before committing documentation, check internal Markdown links, heading anchors,
+examples, feature availability, and attribution rules. Report procedures that could
+not be independently verified. CLAUDE.md continues to reference these shared rules.
