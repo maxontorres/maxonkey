@@ -1,15 +1,17 @@
 # Security model
 
-**Status**: Task 001 (implemented) handles no secrets. Task 002A (this document) proposes the
-security architecture for the encrypted vault. It is **not implemented** and is awaiting
-owner approval. Nothing described under "Planned" protects anything today.
+**Status**: Approved by the owner on 2026-10-19. Task 002B implements the key hierarchy,
+passphrase and recovery-key slots, vault file integrity checks, terminal-only credential
+input, memory wiping, and Linux process hardening. Secret storage, records, and backups
+arrive in Task 002C; the broker and MCP in a later task. Statements marked "planned"
+or "future" do not protect anything yet.
 
 Related: [architecture](architecture.md) · [ADR 0001 — key custody and storage](adr/0001-key-custody-and-storage.md) ·
 [Spec 002 — encrypted vault](../specs/002-encrypted-vault/spec.md)
 
 ## Contents
 
-- [Current guarantees (Task 001)](#current-guarantees-task-001)
+- [Current guarantees (Task 002B)](#current-guarantees-task-002b)
 - [Confirmed requirements](#confirmed-requirements)
 - [Security goals and non-goals](#security-goals-and-non-goals)
 - [Assets and trust boundaries](#assets-and-trust-boundaries)
@@ -21,11 +23,12 @@ Related: [architecture](architecture.md) · [ADR 0001 — key custody and storag
 - [Platform notes](#platform-notes)
 - [Decisions still open](#decisions-still-open)
 
-## Current guarantees (Task 001)
+## Current guarantees (Task 002B)
 
-Task 001 has no vault, cryptography, database, MCP server, clipboard access, telemetry,
-networking, or secret entry fields. Status output must never imply a vault is secured,
-locked, or unlocked.
+MaxonKey can create a vault, change its passphrase, and recover it with the recovery key.
+It cannot store secrets yet. It has no MCP server, clipboard access, telemetry, or
+networking. Status output shows `NOT INITIALIZED` or `INITIALIZED (LOCKED)` and never
+claims the vault is unlocked, because no process keeps it open between commands.
 
 ## Confirmed requirements
 

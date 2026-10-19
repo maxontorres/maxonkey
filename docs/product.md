@@ -6,12 +6,11 @@ Rust; Windows first, Linux and macOS later. Single-user, offline operation.
 Interfaces: clap CLI, Ratatui/Crossterm TUI, and a future MCP server for AI coding agents.
 The product will provide a local encrypted vault, project/environment organization,
 secret creation/retrieval/update/deletion, and eventually secure developer sharing.
-SQLite is provisionally selected; it is not installed or used in Task 001. Task 002A proposes
-SQLite with application-layer encryption ([ADR 0001](adr/0001-key-custody-and-storage.md)),
-pending owner approval.
+Storage is a bundled SQLite file with application-layer encryption
+([ADR 0001](adr/0001-key-custody-and-storage.md), approved).
 
 MCP plaintext reads and secret creation, updates, and deletion require owner approval.
 
-Task 001 delivers only CLI information commands and Dashboard, Help, and About screens
-with keyboard navigation and graceful exit. All sensitive capabilities and organization/
-sharing features remain unavailable. No secret input or persistence exists.
+Task 001 delivered CLI information commands and Dashboard, Help, and About screens.
+Task 002B adds vault creation, passphrase change, and recovery-key recovery. Secret
+storage, organization, backup, MCP, and sharing remain unavailable.

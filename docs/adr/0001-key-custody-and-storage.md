@@ -1,12 +1,12 @@
 # ADR 0001 — Key custody and vault storage
 
-- **Status**: Proposed — awaiting owner approval (Task 002A)
+- **Status**: Accepted — approved by the owner on 2026-10-19; implemented in Task 002B (key slots, manifest) and 002C (records)
 - **Date**: 2026-10-19
 - **Scope**: How MaxonKey derives, wraps, holds, and stores keys and encrypted records.
 - **Related**: [security model](../security.md), [architecture](../architecture.md),
   [Spec 002](../../specs/002-encrypted-vault/spec.md)
 
-Nothing in this record is implemented. It decides *how* Task 002B will be built.
+This record decides how keys are derived, wrapped, held, and stored.
 
 ## Context
 
@@ -68,10 +68,11 @@ so a tampered header cannot cause a denial of service. The library itself allows
 
 SQLite stores **only ciphertext and non-sensitive structure**:
 
-- `vault_header` (one row): format version, random 16-byte vault id, KDF identifier and
-  parameters, salt. Plaintext but authenticated:
-  every header field is bound into the AEAD *associated data* (AAD) of the slot it protects.
-- `key_slots`: wrapped VK and nonce per slot (passphrase slot, optional recovery slot).
+- `vault_header` (one row): format version and random 16-byte vault id.
+- `key_slots`: per slot (passphrase slot, optional recovery slot) the KDF identifier,
+  parameters, salt, and wrapped VK. Plaintext but authenticated: every header and slot
+  field is bound into the AEAD *associated data* (AAD) of the slot it protects. Keeping KDF
+  settings per slot means a passphrase change never invalidates the recovery slot.
 - `records`: random 16-byte record id, `meta_blob`, `value_blob`. All user-supplied text —
   project, environment, secret name, notes, timestamps — lives inside `meta_blob`.
   Secret values live in `value_blob`.

@@ -12,8 +12,10 @@ preserve unrelated work and use a dedicated branch. Never push directly to main.
   Codex after setup to discover `$speckit-*`. Feature artifacts live in `specs/`.
 - Keep documentation proportionate. Do not generate future-feature designs or
   introduce service/repository abstractions before they are needed.
-- Task 001 is CLI/TUI foundation only. Do not add encryption, actual vault/SQLite
-  storage, secret CRUD, or MCP implementations.
+- Current scope: Task 002 (encrypted vault, `specs/002-encrypted-vault/`). Cryptography,
+  key handling, and the vault file format follow ADR 0001 and Spec 002 exactly; changing
+  them requires an updated spec and decision record approved by the owner. Do not add
+  MCP, a broker, clipboard access, or sharing before their specifications are approved.
 
 ## Dependency/API policy
 - Read `Cargo.toml`, `Cargo.lock`, and `cargo tree` before using dependency APIs.
@@ -37,7 +39,9 @@ cargo build --release --locked
 ```
 
 On Linux, also run `python3 tests/tui_pty.py target/release/maxonkey` for real
-terminal exit/restoration coverage. Windows/Linux CI is configured; distinguish
+terminal exit/restoration coverage and `python3 tests/vault_pty.py target/release/maxonkey`
+for the end-to-end vault flow. Run `cargo deny --locked check advisories licenses` when
+dependencies change (CI runs it on every push). Windows/Linux CI is configured; distinguish
 local results from observed runner results. Never claim a check passed unless it ran.
 
 ## Security and UI

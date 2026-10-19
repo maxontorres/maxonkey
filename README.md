@@ -3,9 +3,9 @@
 **A personal, local-first secrets manager being developed by Maxon Torres and published by Maxon Torres Software.**
 
 > [!WARNING]
-> **This version is a foundation prototype, not a working secrets manager.**
-> You can explore its command-line and full-screen interfaces. It cannot create,
-> encrypt, store, retrieve, or share secrets. Do not use it to manage passwords or credentials.
+> **This version is a prototype, not a working secrets manager.**
+> You can explore its interfaces and create an encrypted vault, but it cannot yet
+> store, retrieve, or share secrets. Do not use it to manage passwords or credentials.
 
 New here? Read [system requirements](#system-requirements), follow [installation](#installation)
 for your operating system, then try the [quick start](#quick-start).
@@ -45,9 +45,10 @@ A **secret** is sensitive information such as a password, an API key used to acc
 an online service, or a database credential.
 
 **Local-first** means the planned application will keep its primary data on your
-computer and work without an internet connection. An **encrypted vault** will be
-a protected store whose contents require an appropriate key to read. That vault
-has **not** been implemented yet.
+computer and work without an internet connection. An **encrypted vault** is a
+protected file whose contents can only be read with your **master passphrase**
+(a long password only you know). Version 0.1.0 can create and manage that vault,
+but it **cannot store secrets in it yet**.
 
 Version 0.1.0 currently provides two ways to explore the application:
 
@@ -86,20 +87,20 @@ tools described below. If you need a production password manager today, MaxonKey
 | Dashboard, Help, and About screens | Implemented and verified | Navigate with the keyboard and exit cleanly. |
 | Millennium Blue theme and visible keyboard hints | Implemented and verified | Text labels and selection markers accompany color. |
 | Small-terminal handling | Implemented and verified | The full layout needs 64 columns × 22 rows; smaller windows show resize guidance. |
-| Secrets manager as a complete product | Partially implemented | Only the interface foundation exists. No secret-handling operation works yet. |
-| Encryption and encrypted vault | Planned; not implemented | Security architecture proposed in Task 002A and awaiting owner approval; see [Spec 002](specs/002-encrypted-vault/spec.md). |
-| Master-passphrase management | Planned; not implemented | There is no password creation, unlock, reset, or recovery workflow. |
-| SQLite vault storage | Provisionally planned; not implemented | SQLite is a possible local database; no database is created or used. |
-| Secret creation, retrieval, updates, and deletion | Planned; not implemented | Sometimes called CRUD; none of these operations is available. |
+| Secrets manager as a complete product | Partially implemented | The vault can be created and its passphrase managed. Secrets cannot be stored yet. |
+| Encrypted vault creation (`vault init`) | Implemented (Task 002B) | Creates an encrypted vault file protected by your master passphrase and an optional recovery key. |
+| Master-passphrase change and recovery | Implemented (Task 002B) | `vault change-passphrase` and `vault recover`. There is no reset without the passphrase or recovery key. |
+| Encryption and SQLite vault storage | Implemented (Task 002B) | XChaCha20-Poly1305 encryption, Argon2id key derivation, and a bundled SQLite database file. |
+| Secret creation, retrieval, updates, and deletion | Planned; not implemented (Task 002C) | Sometimes called CRUD; none of these operations is available. |
+| Backup, verify, and restore | Planned; not implemented (Task 002C) | Until then, copy the vault file while MaxonKey is not running. |
 | Project and environment organization | Planned; not implemented | There are no project or environment management commands. |
 | Model Context Protocol (MCP) integration | Planned; not implemented | MCP lets coding tools interact with an application; no MCP server exists here. |
 | MCP owner approval | Required for future implementation | Approval must precede plaintext reads, creation, updates, and deletion. |
 | Secure sharing | Future work; not implemented | There are no sharing or multi-user operations. |
 | Precompiled downloads and installers | Planned; unavailable | Build from source using the instructions below. |
-| Production secret management | Unsupported in this version | The prototype provides no vault protection. |
+| Production secret management | Unsupported in this version | No secrets can be stored yet, and the vault has not had an independent security review. |
 
-No secret-handling feature is currently in active implementation as part of this
-documentation task. Task 001 is complete; Task 001B improves its documentation.
+Task 002B (vault lifecycle) is implemented. Storing secrets arrives with Task 002C.
 See the [roadmap](#development-roadmap) for the next steps.
 
 ## How it works
@@ -109,8 +110,8 @@ See the [roadmap](#development-roadmap) for the next steps.
 3. Read the implementation status or move between Dashboard, Help, and About.
 4. Press **q**, **Esc**, or **Ctrl+C** to leave the TUI and return to your terminal prompt.
 
-The current application keeps only temporary screen state in memory. It makes no
-application network requests and writes no vault, settings, or application data files.
+The application makes no network requests. It writes one data file, the encrypted
+vault, and only when you run `maxonkey vault init`. Other commands only read it.
 Building it is a separate process that downloads development dependencies and creates
 files under `target/`.
 
@@ -119,6 +120,7 @@ flowchart LR
     Person[You in a terminal] --> Program[MaxonKey executable]
     Program --> CLI[Command supplied: print information]
     Program --> TUI[No command: Dashboard, Help, About]
+    Program --> Vault[vault commands: encrypted vault file]
 ```
 
 ## System requirements
@@ -373,7 +375,7 @@ these paths refer to the executable produced by the release build.
    ```
 
    Expect `maxonkey 0.1.0`, followed by help containing `version`, `about`, `status`,
-   and `help`. The help page also explains that running without a command opens the TUI.
+   `vault`, and `help`. The help page also explains that running without a command opens the TUI.
 
 2. **Inspect current capabilities.**
 
@@ -391,21 +393,25 @@ these paths refer to the executable produced by the release build.
 
    Expected output:
 
+   Expected output (your vault path will differ):
+
    ```text
-   MaxonKey foundation prototype
+   MaxonKey prototype
    CLI / TUI: IMPLEMENTED
-   Encrypted vault: NOT IMPLEMENTED
-   Encryption: NOT IMPLEMENTED
-   SQLite storage: NOT IMPLEMENTED
+   Vault init / passphrase / recovery: IMPLEMENTED
+   Encryption / SQLite storage: IMPLEMENTED
    Secret CRUD: NOT IMPLEMENTED
    Projects / environments: NOT IMPLEMENTED
+   Backup / restore: NOT IMPLEMENTED
    MCP server: NOT IMPLEMENTED
    MCP owner approval: NOT IMPLEMENTED
    Secure sharing: NOT IMPLEMENTED
-   No secrets are read or stored.
+   Vault: NOT INITIALIZED
+   Vault path: /home/you/.local/share/maxonkey/vault.sqlite3
+   Secrets cannot be stored yet.
    ```
 
-   `NOT IMPLEMENTED` is the correct result, not a setup failure.
+   `NOT IMPLEMENTED` is the correct result for features that do not exist yet.
 
 3. **Open the TUI.** Run the executable without an extra command:
 
@@ -426,6 +432,8 @@ these paths refer to the executable produced by the release build.
    and returning to a usable terminal completes your first successful run.
    If the window is too small, enlarge it to at least 64 columns × 22 rows.
 
+4. **Optional: create your encrypted vault.** See [vault setup](#vault-setup).
+
 ## CLI command reference
 
 The general syntax is `maxonkey [COMMAND]`. Brackets mean the command is optional;
@@ -443,7 +451,13 @@ that word with `.\target\release\maxonkey.exe` in PowerShell or
 | `maxonkey version` | Print the application version. | `maxonkey 0.1.0` |
 | `maxonkey --version` or `maxonkey -V` | Print the version using a flag. | `maxonkey 0.1.0` |
 | `maxonkey about` | Identify the application and publisher. | MaxonKey version, Maxon Torres Software, and prototype limitations. |
-| `maxonkey status` | Report current implementation status. | CLI/TUI implemented; unavailable capabilities explicitly labeled. |
+| `maxonkey status` | Report current implementation status and whether a vault exists. | Capabilities labeled; `Vault: NOT INITIALIZED` or `Vault: INITIALIZED (LOCKED)`. |
+| `maxonkey vault init` | Create the encrypted vault. | Asks for a new passphrase twice, shows a recovery key once, then `Vault created: <path>`. |
+| `maxonkey vault init --no-recovery-key` | Create the vault without a recovery key. | As above, plus a warning that a forgotten passphrase cannot be recovered. |
+| `maxonkey vault status` | Show vault details without asking for the passphrase. | Path, format version, key-derivation settings, recovery key, permissions. |
+| `maxonkey vault change-passphrase` | Replace the master passphrase. | Asks for the current passphrase, then the new one twice. |
+| `maxonkey vault recover` | Set a new passphrase using the recovery key. | Asks for the recovery key, then the new passphrase twice. |
+| `--vault <PATH>` | Use a different vault file with any command. | Useful for testing or a portable vault. |
 
 Examples from the project root on Linux:
 
@@ -460,11 +474,39 @@ Examples from the project root on Windows:
 ```
 
 Informational commands print to the terminal and exit; they do not create data.
-An unknown command or extra argument produces an error and exit code **2**.
-A default launch without a usable terminal produces guidance and exit code **1**.
-Successful informational commands and normal TUI exit return **0**. An exit code
-is the numeric result other programs use to determine whether a command succeeded.
+Only `vault init` creates a file. An **exit code** is the number other programs use to
+tell whether a command succeeded:
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Success |
+| 1 | General error, for example passphrases did not match or no terminal is available |
+| 2 | Unknown command or option |
+| 3 | Wrong passphrase or recovery key (or a damaged key slot) |
+| 4 | Vault integrity failure: the file is damaged, modified, or not a MaxonKey vault |
+| 5 | No vault exists yet |
+
 There are no secret-management commands in this version.
+
+### Vault setup
+
+1. Run `maxonkey vault init` in a terminal (PowerShell, Windows Terminal, or Bash).
+2. Type a **master passphrase** of at least 12 characters, then repeat it. Typing is
+   hidden. Four or more random words, such as a phrase you will remember but nobody
+   could guess, work well. MaxonKey cannot reset it for you.
+3. MaxonKey shows a **recovery key**: 13 groups of four letters and digits. It appears
+   once and is never saved to a file. Write it on paper or store it in a separate
+   password manager, then press Enter. Anyone holding it can open your vault.
+4. Clear your terminal scrollback (Windows Terminal: **Ctrl+Shift+K**; most Linux
+   terminals: `clear` or the menu's "Clear scrollback") so the key does not stay on screen.
+5. Run `maxonkey vault status` to confirm `Vault: INITIALIZED (LOCKED)`.
+
+MaxonKey asks for passphrases only on the terminal itself. It never accepts them as
+command options, environment variables, or piped input, so they do not end up in
+shell history. Commands that need the passphrase fail with exit code 1 when no
+interactive terminal is available, for example inside a script or an AI agent tool.
+Each command unlocks the vault, does its work, and locks it again before exiting.
+Unlocking takes about one second on purpose: it makes passphrase guessing slow.
 
 ## Terminal user interface
 
@@ -472,7 +514,7 @@ There are no secret-management commands in this version.
 
 | Screen | What you can do |
 | --- | --- |
-| Dashboard | Read the prototype scope and unavailable capability list. It does not show real secrets or audit activity. |
+| Dashboard | See whether a vault exists (`NOT INITIALIZED` or `INITIALIZED (LOCKED)`) and which capabilities are implemented. It does not show secrets or audit activity, and it cannot unlock the vault. |
 | Help | Read keyboard controls and available CLI commands. |
 | About | Read the version, publisher, platform direction, and prototype limitations. |
 
@@ -518,8 +560,15 @@ maxonkey/
 ├── src/                    Application source
 │   ├── main.rs             Starts the CLI or TUI and handles errors
 │   ├── cli.rs              Defines commands and flags with clap
+│   ├── commands.rs         Runs the vault commands
+│   ├── crypto.rs           Encryption and key derivation (the only crypto code)
 │   ├── info.rs             Shares truthful About and capability text
-│   └── tui.rs              Screens, keyboard input, theme, and terminal cleanup
+│   ├── paths.rs            Standard data folder and permission checks
+│   ├── prompt.rs           Hidden terminal input
+│   ├── secret.rs           Memory-wiping types for keys and passphrases
+│   ├── store.rs            SQLite vault file access
+│   ├── tui.rs              Screens, keyboard input, theme, and terminal cleanup
+│   └── vault.rs            Vault create, unlock, passphrase change, recovery
 ├── tests/                  CLI, terminal, and commit-validator checks
 ├── docs/                   Product, security, UI, architecture, and decision records (adr/)
 ├── specs/                  Feature requirements, plans, tasks, and evidence
@@ -532,60 +581,64 @@ maxonkey/
 ├── rust-toolchain.toml     Stable Rust with rustfmt and Clippy
 ├── AGENTS.md               Shared development and documentation rules
 ├── CLAUDE.md               Reference to the shared rules
+├── deny.toml               Dependency advisory and license policy (cargo-deny)
 └── target/                 Generated build files; appears after building
 ```
 
 For implementation details, see the [architecture](docs/architecture.md).
-For the accepted foundation scope, see the [Task 001 specification](specs/001-project-initialization/spec.md).
+For the accepted scopes, see the [Task 001 specification](specs/001-project-initialization/spec.md)
+and the [encrypted vault specification](specs/002-encrypted-vault/spec.md).
 
 ## Configuration and application data
 
-There are **no application configuration files, environment-variable settings, vault
-paths, or configuration commands** in this version. The theme and shortcuts are
-currently fixed in the source. Changing a terminal's font or size is a terminal
-setting, not a MaxonKey setting.
+There are **no configuration files or environment-variable settings**. The theme and
+shortcuts are fixed in the source. The only data MaxonKey stores is the encrypted
+vault file, created by `maxonkey vault init` in your operating system's standard
+per-user data folder, separate from the executable:
 
-Do not create a `.env` file, database, master passphrase, or data directory to make
-the prototype run. None is read by the application.
-
-Future application data will be separate from the executable. These paths are
-**provisional plans only**, not locations used by the current application:
-
-| Platform | Proposed future data location |
+| Platform | Vault file |
 | --- | --- |
-| Windows | `%LOCALAPPDATA%\MaxonKey` |
-| Linux | `$XDG_DATA_HOME/maxonkey`, falling back to `~/.local/share/maxonkey` |
-| macOS | Not decided. |
+| Windows | `%LOCALAPPDATA%\MaxonKey\data\vault.sqlite3` (not synchronized between computers) |
+| Linux | `$XDG_DATA_HOME/maxonkey/vault.sqlite3`, falling back to `~/.local/share/maxonkey/vault.sqlite3` |
+| macOS (not yet supported) | `~/Library/Application Support/MaxonKey/vault.sqlite3` |
+
+Use `--vault <PATH>` to choose another file. On Linux the folder is created readable
+only by you (`700`) and the file likewise (`600`); `vault status` warns if that changes.
+On Windows the per-user folder is already private to your account; `vault status`
+warns if the file grants access to broad groups such as Everyone or Users.
 
 Current `target/` files are compiler output, not a vault. A manually copied executable
-can run outside the repository. Copying it does not create or move any application data.
+can run outside the repository. Copying it does not create or move the vault.
 
 ## Security
 
 > [!IMPORTANT]
 > MaxonKey 0.1.0 is not production-ready secret-management software.
-> It offers no encrypted storage, authentication, unlocking, or recovery mechanism.
+> It can create an encrypted vault but cannot store secrets in it yet, and it has
+> not had an independent security review.
 
-The prototype has no credential entry fields, secret operations, application network
-requests, telemetry, clipboard access, database, or MCP server. It does not have a
-vault that can be considered “locked” or “unlocked.” Status labels report missing
-implementation, not the safety of anything stored elsewhere on your machine.
+What is implemented (Task 002B): the vault key is a random 256-bit key wrapped by a
+key derived from your passphrase with Argon2id (256 MiB of memory, 3 passes), and by
+the optional recovery key. Vault data is encrypted with XChaCha20-Poly1305. Changes to the
+encrypted data or key settings are detected at unlock; replacing the whole file with
+an older genuine copy is not. Passphrases are read only from the
+terminal, keys are wiped from memory after use, and on Linux other programs running
+as you cannot attach a debugger to MaxonKey or read its memory through `/proc`.
 
-Planned protections include a local encrypted vault and explicit owner approval
-before an MCP agent may read plaintext, create, update, or delete a secret.
-Plaintext means readable, unencrypted secret content. Approval enforcement is a
-future requirement, not a working safeguard in this prototype.
+The application has no network requests, telemetry, clipboard access, or MCP server.
+The vault is never "unlocked" between commands: each command locks it before exiting.
 
-Before vault implementation, the project must settle its threat model (what it
-protects against), cryptography, key custody, passphrase derivation, memory handling,
-metadata protection, permissions, backups, and recovery. The authoritative list of
-open decisions is in [security requirements](docs/security.md). Never include real
-credentials in bug reports, test data, screenshots, or documentation examples.
+Planned protections include explicit owner approval before an MCP agent may read
+plaintext, create, update, or delete a secret. Plaintext means readable, unencrypted
+secret content. Approval enforcement is a future requirement, not a working safeguard
+in this prototype. Never include real credentials in bug reports, test data,
+screenshots, or documentation examples.
 
-Task 002A proposed answers to these questions: a [threat model](docs/security.md#threat-model),
-a [key custody and storage decision record](docs/adr/0001-key-custody-and-storage.md), and the
-[encrypted vault specification](specs/002-encrypted-vault/spec.md) with its owner-approval
-table. These are designs only; none of them is implemented or protects anything yet.
+The security design is described by the approved [threat model](docs/security.md#threat-model),
+the [key custody and storage decision record](docs/adr/0001-key-custody-and-storage.md),
+and the [encrypted vault specification](specs/002-encrypted-vault/spec.md). Read
+[what MaxonKey cannot protect against](docs/security.md#what-maxonkey-cannot-protect-against),
+especially if you use AI coding agents on the same computer account.
 
 ## Development setup
 
@@ -672,7 +725,7 @@ finish successfully; a command that fails has not verified the project.
 | `cargo fmt --all -- --check` | Formatting matches Rust's standard formatter. | No differences; often no output. |
 | `cargo check --locked` | The source and types can be checked without producing a final executable. | `Finished`, without compiler errors. |
 | `cargo clippy --locked --all-targets -- -D warnings` | Clippy, Rust's code-quality checker, finds no warnings in application/test targets. | `Finished`, with no warnings or errors. |
-| `cargo test --locked` | Automated parsing, CLI output, navigation, and layout tests pass. | At Task 001 completion: 8 unit tests and 6 CLI integration tests, all passing. Counts may grow. |
+| `cargo test --locked` | Automated parsing, CLI output, navigation, layout, encryption, and vault tests pass. | At Task 002B completion: 39 unit tests and 9 CLI integration tests, all passing. Counts may grow. |
 | `cargo build --release --locked` | The optimized executable can be built. | `Finished`, without build errors. |
 
 Copyable sequence:
@@ -708,8 +761,23 @@ Two additional checks cover repository policy and terminal cleanup:
    restoration; its navigation scenario also resizes the terminal. It does not require
    a third-party Python package. It is not a Windows or macOS terminal test.
 
+   The vault test drives real `vault` commands through a pseudo-terminal with test-only
+   passphrases in a temporary folder (your real vault is not touched). It takes about
+   30 seconds because it uses the real key-derivation cost:
+
+   ```bash
+   python3 tests/vault_pty.py target/release/maxonkey
+   ```
+
+   Expect `PASS` lines and one `INFO` line with the measured unlock time.
+
+3. **Dependency advisories and licenses.** CI downloads a pinned, checksum-verified
+   [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) 0.20.2 and runs
+   `cargo deny --locked check advisories licenses` using `deny.toml`. Locally, install it
+   with `cargo install cargo-deny --version 0.20.2 --locked` and run the same command.
+
 [GitHub Actions](https://github.com/maxontorres/maxonkey/actions) runs the Rust checks
-and validator tests on Windows and Ubuntu, plus terminal tests on Ubuntu. A green
+and validator tests on Windows and Ubuntu, plus terminal, vault, and cargo-deny checks on Ubuntu. A green
 run applies to the commit it tested, not automatically to later changes. Local Linux
 and Windows CI results do not substitute for manual Windows TUI testing.
 
@@ -734,7 +802,14 @@ and Windows CI results do not substitute for manual Windows TUI testing.
 | The terminal looks broken after forced termination | On Linux, try `stty sane` to restore input, then `reset` to redraw; you may need to type even if characters do not appear. These are system utilities, not MaxonKey commands. On Windows, close and reopen the terminal tab. Normal q/Esc/Ctrl+C exit should restore it automatically. |
 | A copied Linux binary will not start | Confirm it matches the machine architecture and compatible system libraries, and has executable permission. A local source build is the verified path; arbitrary cross-distribution portability is not guaranteed. |
 | The build runs out of memory or disk | Free disk space, close other large applications, and retry. `cargo build --release --locked -j 1` limits parallel compilation at the cost of speed. The hardware recommendations are not measured minimums. |
-| Status says `NOT IMPLEMENTED` | This is expected. There is no unlock, vault initialization, or secret-management setup to perform yet. |
+| Status says `NOT IMPLEMENTED` | This is expected for features that do not exist yet, such as storing secrets. |
+| `cannot use the terminal … reads passphrases only from an interactive terminal` | Run the command directly in a terminal window. Scripts, pipes, editor output panels, and AI agent tools cannot supply a passphrase, by design. |
+| Exit code 3: `wrong passphrase or recovery key` | Check Caps Lock and keyboard layout, then retry. If you have forgotten it, use `maxonkey vault recover` with your recovery key. |
+| Exit code 4: `vault integrity check failed` | The vault file was damaged or modified. Do not delete it. Restore a copy you made earlier; built-in backup arrives in Task 002C. |
+| Exit code 5: `no vault at …` | Create one with `maxonkey vault init`, or pass the right file with `--vault <PATH>`. |
+| `a vault already exists` | `vault init` never overwrites a vault. Use the existing one, or pass a different `--vault <PATH>`. |
+| `vault status` shows a permissions warning | Linux: run the `chmod` command it prints. Windows: in the file's Properties → Security, remove Everyone, Users, or Authenticated Users. |
+| Forgotten passphrase and no recovery key | The vault cannot be opened. There is no back door; this is what keeps a stolen copy safe. |
 | The commit hook rejects a message | Use exactly one line such as `Docs: Clarify Linux setup`, with an approved case-sensitive type and no body, footer, or attribution trailer. See AGENTS.md. |
 
 If the problem persists, open an issue in the [repository issue tracker](https://github.com/maxontorres/maxonkey/issues).
@@ -745,8 +820,8 @@ error output. Remove credentials, tokens, and unrelated private information firs
 
 ### Can I save passwords or API keys now?
 
-No. The prototype cannot accept, store, encrypt, or retrieve secrets. `NOT IMPLEMENTED`
-is an accurate description of the missing functionality.
+Not yet. You can create the encrypted vault and manage its passphrase, but adding,
+reading, and deleting secrets arrives with Task 002C.
 
 ### Why must I install Rust if I am not a developer?
 
@@ -767,8 +842,9 @@ registration is implemented.
 
 ### Where are my settings and vault?
 
-This version creates neither. See [configuration and application data](#configuration-and-application-data)
-for the distinction between current build files and proposed future data paths.
+There are no settings files. The vault is created by `maxonkey vault init` in your
+standard data folder; see [configuration and application data](#configuration-and-application-data).
+`maxonkey vault status` prints its exact path.
 
 ### Do I need administrator permissions to run it?
 
@@ -778,15 +854,23 @@ no system-wide installation.
 
 ### Can a coding agent access my credentials through MaxonKey?
 
-No. There is no MCP server or credential-access function. Future integration must
-enforce owner approval for plaintext reads, creation, updates, and deletion.
+No. There is no MCP server, and the vault cannot hold secrets yet. Future integration
+must enforce owner approval for plaintext reads, creation, updates, and deletion.
+
+An AI agent running under your computer account can run `maxonkey` like you can, but it
+cannot answer the passphrase prompt without knowing your passphrase. Never type your
+passphrase into an AI chat. For stronger separation, run agents under a separate
+operating-system account, container, or virtual machine; see the
+[security model](docs/security.md#ai-agents-running-as-the-owner).
 
 ### How do I remove a local installation?
 
 Exit MaxonKey, then remove the executable copy you created in your personal `bin`
 folder. If you added a PATH entry only for this application, you may remove that
-entry too. No vault data is created by this version. Removing a clone also removes
-that clone's source and build files, so preserve any work you want to keep.
+entry too. Removing the executable does not remove your vault; see
+[configuration and application data](#configuration-and-application-data) for its
+location, and delete it only if you are sure you no longer need it. Removing a clone
+also removes that clone's source and build files, so preserve any work you want to keep.
 
 ## Development roadmap
 
@@ -794,14 +878,15 @@ that clone's source and build files, so preserve any work you want to keep.
 | --- | --- |
 | Task 001 — Foundation | Complete: Rust binary, CLI, Millennium Blue TUI, specifications, tests, and Windows/Linux CI. |
 | Task 001B — Documentation | This update: comprehensive beginner guide and permanent documentation standards. Application behavior is unchanged. |
-| Task 002A — Vault security architecture | Proposed: threat model, ADR, and specification with acceptance criteria. Awaiting owner approval; no application behavior changed. |
-| Task 002B/002C — Encrypted vault | Not started. Implementation begins only after the owner approves the [decision table](specs/002-encrypted-vault/spec.md#owner-approval-checkpoint). |
+| Task 002A — Vault security architecture | Complete: threat model, ADR, and specification; all decisions approved by the owner. |
+| Task 002B — Vault lifecycle | Complete: encryption core, `vault init/status/change-passphrase/recover`, tests, and cargo-deny in CI. |
+| Task 002C — Secrets, backup, restore | Next: secret commands, record integrity manifest, key rotation, backup/verify/restore. |
 | Later — Organization and secret operations | Planned work requiring its own specifications and verification. |
 | Later — MCP integration | No server yet. Owner-approval boundaries must be designed and enforced before agent credential access. |
 | Later — Sharing and distribution | Secure sharing, precompiled downloads, installers, and broader platform verification require separate work. |
 
 No release dates or production-security guarantees are promised by this roadmap.
-Task 002's security decisions awaiting approval are tracked in [Spec 002](specs/002-encrypted-vault/spec.md#owner-approval-checkpoint).
+Task 002's approved security decisions are recorded in [Spec 002](specs/002-encrypted-vault/spec.md#owner-approval-checkpoint).
 
 ## Contributing
 
@@ -821,9 +906,10 @@ Task 002's security decisions awaiting approval are tracked in [Spec 002](specs/
    `Docs`, `Build`, and `Security`. No body, footer, co-author trailer, or AI self-attribution
    belongs in the message. The full policy and hook instructions live in AGENTS.md.
 
-Do not upgrade dependencies without a reason and matching-version API review. No
-contribution in Task 001B should implement encryption, SQLite storage, passphrase
-management, or MCP. Keep the project identity as MaxonKey, developed by Maxon Torres
+Do not upgrade dependencies without a reason and matching-version API review. Changes
+to cryptography, key handling, or storage format require an updated specification and
+decision record first. No contribution should implement MCP before its specification
+is approved. Keep the project identity as MaxonKey, developed by Maxon Torres
 and published by Maxon Torres Software.
 
 ## License
