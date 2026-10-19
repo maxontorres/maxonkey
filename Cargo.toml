@@ -7,6 +7,22 @@ description = "A local-first secrets manager — foundation prototype"
 publish = false
 
 [dependencies]
+argon2 = { version = "=0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc", "zeroize"] }
 clap = { version = "=4.6.7", features = ["derive"] }
 crossterm = "=0.29.0"
+data-encoding = "=2.11.1"
+directories = "=6.0.0"
+getrandom = "=0.4.3"
 ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm"] }
+rpassword = "=7.5.4"
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+tempfile = "=3.27.0"
+unicode-normalization = "=0.1.26"
+zeroize = { version = "=1.9.1", features = ["derive"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "=0.2.191"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_SystemServices"] }

@@ -2,12 +2,13 @@
 
 **Feature Branch**: `main` (owner-directed for the initial project phase)
 **Created**: 2026-10-19
-**Status**: Draft — security architecture awaiting owner approval (Task 002A). Not implemented.
+**Status**: Approved by the owner on 2026-10-19 (all decisions D1–D17 as recommended).
+Task 002B implemented; Task 002C pending. Plan: [plan.md](plan.md) · Tasks: [tasks.md](tasks.md)
 **Input**: Design the encrypted local vault (storage, cryptography, key custody, lifecycle,
 integrity, backup, platform security, future broker, AI-agent threats) before implementation.
 
 **Authoritative design**: [security model](../../docs/security.md) ·
-[architecture](../../docs/architecture.md#proposed-vault-architecture-task-002-not-implemented) ·
+[architecture](../../docs/architecture.md#vault-architecture-task-002) ·
 [ADR 0001](../../docs/adr/0001-key-custody-and-storage.md). This spec states requirements and
 tests; it does not repeat the design rationale.
 
@@ -179,7 +180,7 @@ The owner stores `STRIPE_KEY` for project `shop`, environment `prod`, and later 
 **Supply chain**
 
 - **SR-040**: New crypto/storage dependencies are exact-pinned at the versions in
-  [architecture](../../docs/architecture.md#dependency-candidates-exact-versions-checked-2026-10-19)
+  [architecture](../../docs/architecture.md#dependencies-exact-versions-checked-2026-10-19)
   unless a reviewed reason changes them; CI adds `cargo deny check advisories licenses`.
 
 ## Security Test Requirements
@@ -240,24 +241,24 @@ that the CLI cannot reach; at least one end-to-end test uses the real defaults.
 
 ## Owner approval checkpoint
 
-Implementation must not start until the owner approves or amends each row.
+Approved by the owner on 2026-10-19: every row as recommended.
 
-| # | Decision | Recommended | Alternatives considered | Security implications | Complexity | Owner approval |
+| # | Decision | Recommended | Alternatives considered | Security implications | Complexity | Owner decision |
 | --- | --- | --- | --- | --- | --- | --- |
-| D1 | Storage encryption layer | SQLite (bundled) + per-record XChaCha20-Poly1305, all user metadata encrypted | SQLCipher whole-file; single encrypted file | Hides values and names; leaks record count, padded sizes, file times. SQLCipher hides more structure but adds a C crypto stack | Medium | Required |
-| D2 | AEAD | XChaCha20-Poly1305, `chacha20poly1305 =0.11.0` | AES-256-GCM; AES-GCM-SIV; ring/aws-lc-rs; libsodium | Random 192-bit nonces remove nonce-reuse risk; constant-time without AES-NI; audited crate | Low | Required |
-| D3 | Argon2id parameters | m=256 MiB, t=3, p=1; floor 64 MiB/t=3; open ceilings 2 GiB/t=10/p=16 | OWASP minimum 19 MiB/t=2; RFC 9106 2 GiB/t=1 | ≈0.75 s per guess on a 4-vCPU runner; ceilings stop header-based DoS | Low | Required |
-| D4 | Key hierarchy | Random VK wrapped per key slot | Encrypt data directly with passphrase-derived key | Fast passphrase change; enables recovery slot and future hardware slots | Low | Required |
-| D5 | Key custody | Passphrase only; VK never in OS keychain | Keychain/DPAPI auto-unlock; Windows Hello/TPM/FIDO2 slot | Keychain unlock would let any same-user agent open the vault; hardware slot deferred | Low | Required |
-| D6 | Recovery | Optional recovery key offered at init (default: create) | No recovery; mandatory recovery key | Second offline secret that fully opens the vault; must be stored safely | Low | Required |
-| D7 | Rollback/tamper detection | Encrypted manifest (generation + SHA-256 per record) | Per-record AEAD only; external counter in OS keychain | Detects deletion, per-record rollback, swaps; whole-file rollback stays undetectable | Medium | Required |
-| D8 | Unlock model for Task 002 | Passphrase per CLI command, no background process; TUI status only | Session cache/daemon now | No unlocked state for agents to piggyback on; slower repeated use | Low | Required |
-| D9 | Passphrase input policy | Terminal only; min 12 chars; NFC normalization; no stdin/env/argv | `--passphrase-stdin` for scripting; no normalization | Agents cannot supply it without knowing it; scripting not supported | Low | Required |
-| D10 | Secret value I/O | Hidden prompt or explicit `--stdin`; reveal only via `secret get` to stdout; no clipboard | Clipboard with auto-clear; `run` env injection | Values printed to stdout are outside MaxonKey's control once shown | Low | Required |
-| D11 | SQLite durability mode | `journal_mode=DELETE`, `synchronous=FULL`, `secure_delete=ON` | WAL mode | Fewer stale ciphertext copies; slower writes irrelevant at personal scale | Low | Required |
-| D12 | Data location and permissions | OS-standard paths; Linux 0700/0600 at creation; Windows profile ACL + warning | Explicit Windows DACL via `windows-sys`; beside executable | Same-user processes are not blocked by any of these | Low | Required |
-| D13 | Backup policy | Encrypted snapshots; automatic only before migration/restore (keep 3); no plaintext export | Periodic automatic backups; plaintext export | Old backups open with the passphrase valid at backup time | Low | Required |
-| D14 | Memory protection | Zeroize + redaction + Linux non-dumpable; no memory locking in Task 002 | `mlock`/`VirtualLock` | Pages may reach swap/hibernation before wiping | Low (Medium with locking) | Required |
-| D15 | Future broker shape (direction only) | Owner-only socket/named pipe; broker-owned approval console; single-use 60 s approvals; MCP holds no keys | Per-session grants; OS-native consent dialogs; no broker | Guards against misbehaving agents using MaxonKey; not against code attacking the OS session | High (Task 003) | Direction approval |
-| D16 | Agent isolation guidance | Document separate OS account/container/VM for agents as the real boundary | Rely on MaxonKey approvals alone | Sets honest expectations | Low | Required |
-| D17 | Supply-chain check | Add `cargo deny check advisories licenses` to CI in 002B | `cargo audit` only; none | Catches known-vulnerable or mis-licensed dependencies | Low | Required |
+| D1 | Storage encryption layer | SQLite (bundled) + per-record XChaCha20-Poly1305, all user metadata encrypted | SQLCipher whole-file; single encrypted file | Hides values and names; leaks record count, padded sizes, file times. SQLCipher hides more structure but adds a C crypto stack | Medium | Approved |
+| D2 | AEAD | XChaCha20-Poly1305, `chacha20poly1305 =0.11.0` | AES-256-GCM; AES-GCM-SIV; ring/aws-lc-rs; libsodium | Random 192-bit nonces remove nonce-reuse risk; constant-time without AES-NI; audited crate | Low | Approved |
+| D3 | Argon2id parameters | m=256 MiB, t=3, p=1; floor 64 MiB/t=3; open ceilings 2 GiB/t=10/p=16 | OWASP minimum 19 MiB/t=2; RFC 9106 2 GiB/t=1 | ≈0.75 s per guess on a 4-vCPU runner; ceilings stop header-based DoS | Low | Approved |
+| D4 | Key hierarchy | Random VK wrapped per key slot | Encrypt data directly with passphrase-derived key | Fast passphrase change; enables recovery slot and future hardware slots | Low | Approved |
+| D5 | Key custody | Passphrase only; VK never in OS keychain | Keychain/DPAPI auto-unlock; Windows Hello/TPM/FIDO2 slot | Keychain unlock would let any same-user agent open the vault; hardware slot deferred | Low | Approved |
+| D6 | Recovery | Optional recovery key offered at init (default: create) | No recovery; mandatory recovery key | Second offline secret that fully opens the vault; must be stored safely | Low | Approved |
+| D7 | Rollback/tamper detection | Encrypted manifest (generation + SHA-256 per record) | Per-record AEAD only; external counter in OS keychain | Detects deletion, per-record rollback, swaps; whole-file rollback stays undetectable | Medium | Approved |
+| D8 | Unlock model for Task 002 | Passphrase per CLI command, no background process; TUI status only | Session cache/daemon now | No unlocked state for agents to piggyback on; slower repeated use | Low | Approved |
+| D9 | Passphrase input policy | Terminal only; min 12 chars; NFC normalization; no stdin/env/argv | `--passphrase-stdin` for scripting; no normalization | Agents cannot supply it without knowing it; scripting not supported | Low | Approved |
+| D10 | Secret value I/O | Hidden prompt or explicit `--stdin`; reveal only via `secret get` to stdout; no clipboard | Clipboard with auto-clear; `run` env injection | Values printed to stdout are outside MaxonKey's control once shown | Low | Approved |
+| D11 | SQLite durability mode | `journal_mode=DELETE`, `synchronous=FULL`, `secure_delete=ON` | WAL mode | Fewer stale ciphertext copies; slower writes irrelevant at personal scale | Low | Approved |
+| D12 | Data location and permissions | OS-standard paths; Linux 0700/0600 at creation; Windows profile ACL + warning | Explicit Windows DACL via `windows-sys`; beside executable | Same-user processes are not blocked by any of these | Low | Approved |
+| D13 | Backup policy | Encrypted snapshots; automatic only before migration/restore (keep 3); no plaintext export | Periodic automatic backups; plaintext export | Old backups open with the passphrase valid at backup time | Low | Approved |
+| D14 | Memory protection | Zeroize + redaction + Linux non-dumpable; no memory locking in Task 002 | `mlock`/`VirtualLock` | Pages may reach swap/hibernation before wiping | Low (Medium with locking) | Approved |
+| D15 | Future broker shape (direction only) | Owner-only socket/named pipe; broker-owned approval console; single-use 60 s approvals; MCP holds no keys | Per-session grants; OS-native consent dialogs; no broker | Guards against misbehaving agents using MaxonKey; not against code attacking the OS session | High (Task 003) | Direction approved |
+| D16 | Agent isolation guidance | Document separate OS account/container/VM for agents as the real boundary | Rely on MaxonKey approvals alone | Sets honest expectations | Low | Approved |
+| D17 | Supply-chain check | Add `cargo deny check advisories licenses` to CI in 002B | `cargo audit` only; none | Catches known-vulnerable or mis-licensed dependencies | Low | Approved |

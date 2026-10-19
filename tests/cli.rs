@@ -45,24 +45,88 @@ fn about_identifies_product_and_vendor() {
     }
 }
 
+fn temp_vault() -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("vault.sqlite3").display().to_string();
+    (dir, path)
+}
+
 #[test]
-fn status_reports_every_unimplemented_capability() {
-    let output = run(&["status"]);
+fn status_reports_capabilities_and_vault_state() {
+    let (_dir, vault) = temp_vault();
+    let output = run(&["status", "--vault", &vault]);
     assert!(output.status.success());
     let text = stdout(&output);
     for label in [
-        "Encrypted vault",
-        "Encryption",
-        "SQLite storage",
-        "Secret CRUD",
-        "MCP server",
+        "Vault init / passphrase / recovery",
+        "Encryption / SQLite storage",
     ] {
         assert!(
             text.lines()
-                .any(|line| line.contains(label) && line.contains("NOT IMPLEMENTED"))
+                .any(|line| line == format!("{label}: IMPLEMENTED"))
         );
     }
-    assert!(text.contains("No secrets are read or stored"));
+    for label in [
+        "Secret CRUD",
+        "Backup / restore",
+        "MCP server",
+        "MCP owner approval",
+    ] {
+        assert!(
+            text.lines()
+                .any(|line| line == format!("{label}: NOT IMPLEMENTED"))
+        );
+    }
+    assert!(text.contains("Vault: NOT INITIALIZED"));
+    assert!(!text.contains("UNLOCKED"));
+    assert!(text.contains("Secrets cannot be stored yet"));
+}
+
+#[test]
+fn vault_status_without_vault_needs_no_passphrase() {
+    let (_dir, vault) = temp_vault();
+    let output = run(&["vault", "status", "--vault", &vault]);
+    assert!(output.status.success());
+    let text = stdout(&output);
+    assert!(text.contains("Vault: NOT INITIALIZED"));
+    assert!(text.contains("maxonkey vault init"));
+    assert!(
+        !std::path::Path::new(&vault).exists(),
+        "status must not create files"
+    );
+}
+
+#[test]
+fn vault_commands_fail_before_prompting_when_preconditions_fail() {
+    let (dir, vault) = temp_vault();
+    // Missing vault: exit 5 without asking for a passphrase.
+    for command in ["change-passphrase", "recover"] {
+        let output = run(&["vault", command, "--vault", &vault]);
+        assert_eq!(output.status.code(), Some(5), "{command}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("maxonkey vault init"));
+    }
+    // Existing file: init refuses and leaves it unchanged (ST-10).
+    std::fs::write(&vault, b"existing content").unwrap();
+    let output = run(&["vault", "init", "--vault", &vault]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("already exists"));
+    assert_eq!(std::fs::read(&vault).unwrap(), b"existing content");
+    // Not a vault: status reports an integrity failure (exit 4).
+    let output = run(&["vault", "status", "--vault", &vault]);
+    assert_eq!(output.status.code(), Some(4));
+    let output = run(&["status", "--vault", &vault]);
+    assert!(stdout(&output).contains("Vault: DAMAGED OR UNREADABLE"));
+    drop(dir);
+}
+
+#[test]
+fn credentials_cannot_be_passed_as_arguments() {
+    let (_dir, vault) = temp_vault();
+    for option in ["--passphrase", "--password", "--recovery-key", "--value"] {
+        let output = run(&["vault", "init", "--vault", &vault, option, "MK-CANARY-arg"]);
+        assert_eq!(output.status.code(), Some(2), "{option}");
+        assert!(!std::path::Path::new(&vault).exists());
+    }
 }
 
 #[test]

@@ -51,6 +51,7 @@ impl Screen {
 struct App {
     screen: Screen,
     quit: bool,
+    vault_line: String,
 }
 
 impl App {
@@ -97,7 +98,7 @@ impl Drop for TerminalSession {
     }
 }
 
-pub fn run() -> io::Result<()> {
+pub fn run(vault_line: String) -> io::Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(io::Error::other(
             "the TUI requires an interactive terminal; use maxonkey --help or maxonkey status",
@@ -105,7 +106,10 @@ pub fn run() -> io::Result<()> {
     }
     let mut session = TerminalSession { active: true };
     let mut terminal = ratatui::try_init()?;
-    let mut app = App::default();
+    let mut app = App {
+        vault_line,
+        ..App::default()
+    };
     while !app.quit {
         terminal.draw(|frame| render(frame, &app))?;
         app.handle_event(event::read()?);
@@ -146,7 +150,7 @@ fn render(frame: &mut Frame<'_>, app: &App) {
             Style::default().fg(ICE).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" // {}  FOUNDATION PROTOTYPE", env!("CARGO_PKG_VERSION")),
+            format!(" // {}  PROTOTYPE", env!("CARGO_PKG_VERSION")),
             Style::default().fg(TEXT),
         ),
     ]);
@@ -182,17 +186,21 @@ fn render(frame: &mut Frame<'_>, app: &App) {
     }
 
     let lines: Vec<Line<'_>> = match app.screen {
-        Screen::Dashboard => std::iter::once(Line::from(
-            "Foundation only. No secrets are read or stored.",
-        ))
-        .chain(std::iter::once(Line::from("")))
-        .chain(info::UNAVAILABLE.into_iter().map(|label| {
-            Line::from(vec![
-                Span::styled("[!] ", Style::default().fg(AMBER)),
-                Span::raw(format!("{label}: NOT IMPLEMENTED")),
-            ])
-        }))
-        .collect(),
+        Screen::Dashboard => std::iter::once(Line::from(app.vault_line.as_str()))
+            .chain(std::iter::once(Line::from("")))
+            .chain(info::IMPLEMENTED.into_iter().map(|label| {
+                Line::from(vec![
+                    Span::styled("[+] ", Style::default().fg(BLUE)),
+                    Span::raw(format!("{label}: IMPLEMENTED")),
+                ])
+            }))
+            .chain(info::UNAVAILABLE.into_iter().map(|label| {
+                Line::from(vec![
+                    Span::styled("[!] ", Style::default().fg(AMBER)),
+                    Span::raw(format!("{label}: NOT IMPLEMENTED")),
+                ])
+            }))
+            .collect(),
         Screen::Help => vec![
             Line::from("Tab / Right / Down     Next screen"),
             Line::from("Shift+Tab / Left / Up   Previous screen"),
@@ -200,8 +208,8 @@ fn render(frame: &mut Frame<'_>, app: &App) {
             Line::from("?                      Open Help"),
             Line::from("q / Esc / Ctrl+C       Exit and restore terminal"),
             Line::from(""),
-            Line::from("CLI: help, version, about, status"),
-            Line::from("No animations. No secret operations available."),
+            Line::from("CLI: help, version, about, status, vault"),
+            Line::from("No animations. Secrets cannot be stored yet."),
         ],
         Screen::About => info::ABOUT.lines().map(Line::from).collect(),
     };
@@ -314,6 +322,7 @@ mod tests {
             ] {
                 let app = App {
                     screen,
+                    vault_line: "Vault: NOT INITIALIZED".into(),
                     ..App::default()
                 };
                 let text = rendered(&app, width, height);
@@ -322,6 +331,10 @@ mod tests {
                 assert!(text.contains("q/Esc/Ctrl+C Exit"));
                 assert!(!text.contains("vault unlocked"));
                 if screen == Screen::Dashboard {
+                    assert!(text.contains("Vault: NOT INITIALIZED"), "{text}");
+                    for label in info::IMPLEMENTED {
+                        assert!(text.contains(&format!("{label}: IMPLEMENTED")));
+                    }
                     for label in info::UNAVAILABLE {
                         assert!(text.contains(&format!("{label}: NOT IMPLEMENTED")));
                     }
