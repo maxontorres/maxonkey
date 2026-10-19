@@ -572,7 +572,7 @@ maxonkey/
 ├── tests/                  CLI, terminal, and commit-validator checks
 ├── docs/                   Product, security, UI, architecture, and decision records (adr/)
 ├── specs/                  Feature requirements, plans, tasks, and evidence
-├── .github/workflows/      Automated Windows/Linux checks
+├── .github/                Automated checks, PR policy, Claude workflow, code owners
 ├── .githooks/              Optional local commit-message hook
 ├── .agents/skills/         Checked-in Spec Kit commands for Codex
 ├── .specify/               Spec Kit configuration, templates, and scripts
@@ -672,6 +672,13 @@ can discover `$speckit-*` skills from `.agents/skills/`; the Spec Kit CLI is not
 required to build or run MaxonKey. Setup history and official links are in
 [dependency and tooling decisions](specs/001-project-initialization/research.md).
 Do not reinitialize Spec Kit over existing files just to run the application.
+
+### Automated feature workflow
+
+The owner starts agent work from GitHub: an issue labeled `claude:implement` asks Claude
+Code to implement it and open a pull request, CI and Codex review the result, and the
+owner approves anything beyond low-risk documentation. Setup steps, the merge policy,
+and how to read results are in [development automation](docs/automation.md).
 
 ## Building from source
 
@@ -777,7 +784,11 @@ Two additional checks cover repository policy and terminal cleanup:
    with `cargo install cargo-deny --version 0.20.2 --locked` and run the same command.
 
 [GitHub Actions](https://github.com/maxontorres/maxonkey/actions) runs the Rust checks
-and validator tests on Windows and Ubuntu, plus terminal, vault, and cargo-deny checks on Ubuntu. A green
+and validator tests on Windows and Ubuntu, plus terminal, vault, and cargo-deny checks on Ubuntu,
+for every pull request and every push to `main`. A separate **Repository policy** job checks
+commit messages, scans the full Git history for accidentally committed credentials with a
+pinned [gitleaks](https://github.com/gitleaks/gitleaks), and runs `python3 tests/spec_check.py`
+(every specification has its spec, plan, and tasks files, and Markdown links resolve). A green
 run applies to the commit it tested, not automatically to later changes. Local Linux
 and Windows CI results do not substitute for manual Windows TUI testing.
 
