@@ -5,7 +5,9 @@ if [ "$#" -ne 1 ] || [ ! -r "$1" ]; then
     exit 1
 fi
 
-awk '
+# Preserve carriage returns so Windows text-mode translation cannot hide them.
+# GNU awk documents BINMODE as a no-op on POSIX systems.
+awk -v BINMODE=3 '
     NR == 1 {
         if ($0 !~ /^(Feature|Fix|Bug|Chore|Refactor|Test|Docs|Build|Security): [^[:space:]].*$/ ||
             $0 ~ /[[:cntrl:]]/ || $0 ~ /[[:space:]]$/) {

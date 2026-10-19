@@ -13,7 +13,7 @@ accept() {
 reject() {
     printf '%s' "$1" > "$message_file"
     if sh "$repo_dir/.githooks/commit-msg" "$message_file" >/dev/null 2>&1; then
-        echo "Invalid commit message was accepted" >&2
+        echo "Invalid commit message was accepted: ${2:-format fixture}" >&2
         exit 1
     fi
 }
@@ -39,7 +39,9 @@ reject 'Docs: Subject
 reject 'Docs: Subject
 Co-authored-by: Example <example@example.com>'
 reject "$(printf 'Docs: Tab\tinside')"
-reject "$(printf 'Docs: CRLF\r\n')"
+reject "$(printf 'Docs: Trailing CR\r')" 'trailing carriage return'
+reject "$(printf 'Docs: CRLF\r')
+" 'CRLF terminator'
 if sh "$repo_dir/.githooks/commit-msg" >/dev/null 2>&1; then
     echo "Missing message file was accepted" >&2
     exit 1
