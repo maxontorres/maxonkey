@@ -46,3 +46,20 @@ No parallel agent work is needed. MVP is US1; delivery includes both US1 and US2
   commit and the only published branch is this feature branch (GitHub selected it as default).
   No main branch was created or pushed. PR title/body prepared separately in the workspace.
 - Final follow-up commit changes only this completion record; implementation is unchanged.
+
+
+## Bootstrap continuation on main — 2026-10-19
+
+- Re-inspected the CLI, Millennium Blue TUI, specifications, documentation, and
+  automated tests; the approved Task 001 application scope is already implemented.
+- Integrated the permanent commit-message and attribution policies, shared Claude
+  reference, local commit-msg hook, and Windows/Linux validator tests onto main.
+- Direct commits to main are explicitly authorized by the owner for this bootstrap
+  phase; the normal dedicated-branch rule still applies to later development.
+- The earlier no-base-branch limitation above describes the initial publication only;
+  main now exists and contains the bootstrap implementation.
+- Re-ran formatting, locked cargo check, Clippy with warnings denied, all 14 Rust
+  tests, the locked release build, commit-message validator tests, and Linux PTY
+  checks successfully before the continuation commit. No failures occurred.
+- Encryption, vault/SQLite storage, secret operations, and MCP remain unimplemented.
+  Security decisions and the recommended next task remain in docs/security.md.
