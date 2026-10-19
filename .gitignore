@@ -1,0 +1,9 @@
+/target/
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+# Track only shipped project skills, never local agent session/auth files.
+.agents/*
+!.agents/skills/
