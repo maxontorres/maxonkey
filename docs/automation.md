@@ -144,7 +144,9 @@ Paste the value only into the GitHub secret form. Never put it in a file, issue,
 ### 4. Connect Codex code review
 
 1. In [Codex](https://chatgpt.com/codex), connect your GitHub account and give the Codex
-   GitHub connector access to `maxonkey` only.
+   GitHub connector access to `maxonkey` only (already done for this repository), then
+   [create a Codex cloud environment](https://chatgpt.com/codex/cloud/settings/environments)
+   for `maxonkey`. Without one, Codex replies "create an environment" instead of reviewing.
 2. Open [Codex code review settings](https://chatgpt.com/settings/code-review), enable
    code review for `maxonkey`, and turn on **Automatic review**.
 3. On the first reviewed PR, note the account name that posted the review. If it is not
@@ -153,7 +155,9 @@ Paste the value only into the GitHub secret form. Never put it in a file, issue,
    Actions → Variables**, so Claude receives Codex findings.
 
 Codex code review requires a ChatGPT plan that includes Codex; check current plan details
-on the OpenAI site. **Manual trigger:** comment `@codex review` on any PR. Do this on
+on the OpenAI site. **Manual trigger:** comment `@codex review` on any PR. The
+security-sensitive escalation comment contains that phrase, and Codex responded to it on
+#2, so security-sensitive PRs request a Codex review automatically. Do this on
 security-sensitive PRs whenever a new commit arrives after the last Codex review.
 
 ### 5. Create the trigger label
@@ -196,11 +200,13 @@ Go to **Settings → Rules → Rulesets → New ruleset → New branch ruleset**
 
 | Part | Status |
 | --- | --- |
-| CI policy job (commit messages, gitleaks 8.30.1 secret scan, spec and link check) | Commit check and secret scan logic run locally against this repository's history. Runner results: see the PR that added this automation. |
-| PR policy classification and metadata rules | Exercised locally with a simulated GitHub CLI for docs-only, mixed, cryptography, workflow, MCP, and non-owner cases. |
+| Rust CI on Windows and Ubuntu | Passed on GitHub runners for the PR that added this automation (#2). |
+| CI policy job (commit messages, gitleaks 8.30.1 secret scan, spec and link check) | Passed on a GitHub runner (#2); also run locally against the full history. |
+| PR policy: risk classification | Observed on #2: labeled it `security-sensitive`, posted the owner escalation comment, and left auto-merge off. Other cases (docs-only, mixed, cryptography, MCP, non-owner) exercised locally with a simulated GitHub CLI. |
+| PR policy: metadata | Observed on #2: failed on an AI attribution footer added by the tool that created the PR, as intended. Title and spec rules exercised locally. |
 | Workflow syntax | `actionlint` 1.7.12 with ShellCheck reports no problems. |
 | Claude workflow | **Not yet operational.** Needs setup steps 1–3; then test with a small documentation issue. |
-| Codex review | **Not yet operational.** Needs setup step 4; not tested from this repository. |
+| Codex review | **Not yet operational.** The Codex connector is installed and replied on #2 as `chatgpt-codex-connector[bot]`, asking for a Codex cloud environment for this repository (setup step 4). No review has run yet. |
 | Ruleset, code-owner approval, auto-merge | **Not yet configured.** Needs steps 6–7 in the GitHub settings. |
 
 Merges made by auto-merge do not start a new CI run on `main`, because GitHub does not
