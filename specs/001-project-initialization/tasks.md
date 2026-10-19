@@ -20,7 +20,7 @@
 ## Phase 5: Verification
 - [x] T010 Configure Ubuntu/Windows required checks in `.github/workflows/ci.yml`.
 - [x] T011 Run fmt, check, Clippy, tests, release build, and available PTY checks; record evidence in this file.
-- [ ] T012 Review against spec/plan, commit and push feature branch; prepare PR if a base branch exists.
+- [x] T012 Review against spec/plan, commit and push feature branch; prepare PR if a base branch exists.
 
 ## Dependencies and delivery
 Execute phases in order. US2 uses US1 informational text. Tests precede corresponding behavior.
@@ -39,4 +39,10 @@ No parallel agent work is needed. MVP is US1; delivery includes both US1 and US2
 - Spec Kit prerequisite resolution: passed for spec, plan, and tasks.
 - Review: all six FRs, four SCs, ten acceptance scenarios, and five constitution
   principles checked; no remaining implementation gaps in Task 001.
-- Remote runner results are reported separately after branch publication.
+- Remote Windows and Ubuntu jobs passed all Rust checks and release builds for implementation
+  commit `4764bb9`; Ubuntu additionally passed the PTY test. macOS remains unverified.
+  Evidence: https://github.com/maxontorres/maxonkey/actions/runs/39264078625
+- Feature branch published. PR cannot be opened because the repository had no main/base
+  commit and the only published branch is this feature branch (GitHub selected it as default).
+  No main branch was created or pushed. PR title/body prepared separately in the workspace.
+- Final follow-up commit changes only this completion record; implementation is unchanged.
