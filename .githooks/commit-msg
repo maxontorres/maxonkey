@@ -1,0 +1,23 @@
+#!/bin/sh
+# Validate the message file passed by Git; leave existing history unchanged.
+if [ "$#" -ne 1 ] || [ ! -r "$1" ]; then
+    echo "Usage: commit-msg <readable-message-file>" >&2
+    exit 1
+fi
+
+awk '
+    NR == 1 {
+        if ($0 !~ /^(Feature|Fix|Bug|Chore|Refactor|Test|Docs|Build|Security): [^[:space:]].*$/ ||
+            $0 ~ /[[:cntrl:]]/ || $0 ~ /[[:space:]]$/) {
+            invalid = 1
+        }
+    }
+    NR > 1 { invalid = 1 }
+    END {
+        if (NR != 1 || invalid) {
+            print "Commit message must be exactly one line: Type: Short description" > "/dev/stderr"
+            print "Types: Feature, Fix, Bug, Chore, Refactor, Test, Docs, Build, Security" > "/dev/stderr"
+            exit 1
+        }
+    }
+' "$1"
