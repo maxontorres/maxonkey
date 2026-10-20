@@ -108,6 +108,15 @@ check results into one findings file. Comments from any other account are left o
 
 Use `@claude`, not `@codex`, for fixes, so the two-cycle limit applies.
 
+### False-positive Codex findings
+
+If a Codex finding cites a commit that does not exist in the repository, the Factory
+marks it unverified: no automatic correction runs, **Independent review** fails, and you
+get one comment. If you check the finding and it is wrong, comment
+`/accept-codex <first 7 characters of the commit> <reason>`. That marks **Independent
+review** as passed for that one commit only; any new commit needs a new review. It does
+not skip CI, and security-sensitive PRs still need your merge.
+
 ## Merge policy
 
 | Change | Merge |

@@ -74,6 +74,10 @@ The GitHub workflow is described in [docs/automation.md](docs/automation.md).
   Claude pull requests. At most two correction cycles run per pull request; then the
   owner decides.
 - Serious security findings are escalated to the owner, not fixed autonomously.
+- A Codex finding that cites a commit missing from the repository is unverified and never
+  starts an automatic correction. Only the owner may accept Codex findings for one exact
+  commit with `/accept-codex <sha> <reason>`. Agents never post that command, even when
+  working through the owner's account; CI checks and owner merge of sensitive changes still apply.
 - Agents never merge, approve, enable auto-merge, change labels, edit `.github/`,
   bypass hooks, or change repository settings. Only `.github/workflows/factory.yml`
   merges, and only pull requests limited to the low-risk paths in `.github/CODEOWNERS`.
