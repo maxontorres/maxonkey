@@ -216,10 +216,13 @@ jobs:
             denied=$(jq -r '[.[] | select(.type == "result") | .permission_denials[]?
               | "- `\(.tool_name)`: `\((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:150])`"]
               | unique | .[0:10] | join("\n")' "$EXECUTION_FILE" 2>/dev/null || true)
+            # Command output can contain credentials, so report only a count and a known cause.
             errors=$(jq -r '[.[] | select(.type == "user") | .message.content[]?
-              | select(.type? == "tool_result" and .is_error == true) | .content | tostring
-              | "- `\(.[0:150] | gsub("[`\n]"; " "))`"] | unique | .[0:5] | join("\n")' "$EXECUTION_FILE" 2>/dev/null || true)
-            denied="${denied:+Blocked tool calls:$'\n'$denied}${errors:+${denied:+$'\n\n'}Failed tool calls:$'\n'$errors}"
+              | select(.type? == "tool_result" and .is_error == true) | .content | tostring]
+              | select(length > 0) | "\(length) tool calls failed"
+                + (if any(.[]; test("bwrap")) then ", including sandbox (bubblewrap) errors" else "" end)
+                + "; see the log."' "$EXECUTION_FILE" 2>/dev/null || true)
+            denied="${denied:+Blocked tool calls:$'\n'$denied}${errors:+${denied:+$'\n\n'}$errors}"
           fi
           gh issue comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body \
             "@$GITHUB_REPOSITORY_OWNER Claude could not finish this issue after 2 attempts. Log: $RUN${denied:+$'\n\n'$denied}"
@@ -408,10 +411,13 @@ jobs:
             denied=$(jq -r '[.[] | select(.type == "result") | .permission_denials[]?
               | "- `\(.tool_name)`: `\((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:150])`"]
               | unique | .[0:10] | join("\n")' "$EXECUTION_FILE" 2>/dev/null || true)
+            # Command output can contain credentials, so report only a count and a known cause.
             errors=$(jq -r '[.[] | select(.type == "user") | .message.content[]?
-              | select(.type? == "tool_result" and .is_error == true) | .content | tostring
-              | "- `\(.[0:150] | gsub("[`\n]"; " "))`"] | unique | .[0:5] | join("\n")' "$EXECUTION_FILE" 2>/dev/null || true)
-            denied="${denied:+Blocked tool calls:$'\n'$denied}${errors:+${denied:+$'\n\n'}Failed tool calls:$'\n'$errors}"
+              | select(.type? == "tool_result" and .is_error == true) | .content | tostring]
+              | select(length > 0) | "\(length) tool calls failed"
+                + (if any(.[]; test("bwrap")) then ", including sandbox (bubblewrap) errors" else "" end)
+                + "; see the log."' "$EXECUTION_FILE" 2>/dev/null || true)
+            denied="${denied:+Blocked tool calls:$'\n'$denied}${errors:+${denied:+$'\n\n'}$errors}"
           fi
           gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body \
             "@$OWNER Claude could not finish a correction on this pull request. Log: $RUN${denied:+$'\n\n'$denied}"
