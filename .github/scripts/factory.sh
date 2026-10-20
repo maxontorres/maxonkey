@@ -16,6 +16,7 @@ if [ "$(field .state)" != open ] || [ "$(field .draft)" = true ] \
   echo "skip: not an open, ready, same-repository pull request into main"; exit 0
 fi
 head=$(field .head.sha)
+export BASE_REF; BASE_REF=$(field .base.ref)
 branch=$(field .head.ref)
 author=$(field .user.login)
 claude_pr=false
@@ -26,7 +27,7 @@ comments=$(gh api --paginate "repos/$REPO/issues/$NUMBER/comments" | jq -s 'add 
 # Post one status comment per state and commit, replacing the previous one.
 notify() {
   local state=$1 text=$2 tag="$STATUS_MARKER state=$1 sha=$head -->" old
-  if jq -e --arg t "$tag" 'any(.[]; .body | startswith($t))' <<< "$comments" >/dev/null; then
+  if jq -e --arg t "$tag" 'any(.[]; .user.login == "github-actions[bot]" and (.body | startswith($t)))' <<< "$comments" >/dev/null; then
     return 0
   fi
   for old in $(jq -r --arg m "$STATUS_MARKER" \
@@ -93,7 +94,7 @@ fi
 
 if [ "$codex" = missing ]; then
   # A new commit does not start a Codex review by itself; request one once per commit.
-  if ! jq -e --arg t "$CODEX_MARKER sha=$head -->" 'any(.[]; .body | contains($t))' <<< "$comments" >/dev/null; then
+  if ! jq -e --arg t "$CODEX_MARKER sha=$head -->" 'any(.[]; .user.login == "github-actions[bot]" and (.body | contains($t)))' <<< "$comments" >/dev/null; then
     gh api "repos/$REPO/issues/$NUMBER/comments" -f body="@codex review
 $CODEX_MARKER sha=$head -->" >/dev/null
     echo "requested Codex review"

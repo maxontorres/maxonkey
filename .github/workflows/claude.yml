@@ -155,7 +155,8 @@ jobs:
 
   correct:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.actor == 'github-actions[bot]' || github.actor == github.repository_owner)) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
          startsWith(github.event.comment.body, '@claude') &&
          github.event.comment.user.login == github.repository_owner) ||
