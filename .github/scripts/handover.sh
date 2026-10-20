@@ -26,7 +26,8 @@ out() { printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
 failed=""
 [ "$CLAUDE_OUTCOME" = success ] || failed="Claude did not finish (step outcome: $CLAUDE_OUTCOME)."
 # Only committed work is handed over.
-if [ -z "$failed" ] && [ -n "$(git status --porcelain)" ]; then
+# Files marked assume-unchanged or skip-worktree would hide edits from git status.
+if [ -z "$failed" ] && { [ -n "$(git status --porcelain)" ] || git ls-files -v | grep -Eq '^([a-z]|S) '; }; then
   git status --short | head -20
   failed="Claude left uncommitted changes, so nothing was published."
 fi

@@ -10,7 +10,6 @@ set -euo pipefail
 # Paths below are file names, never pathspec patterns.
 export GIT_LITERAL_PATHSPECS=1
 BOT_NAME="claude[bot]"
-BOT_EMAIL="41898282+claude[bot]@users.noreply.github.com"
 # Same patterns as the Repository policy and PR metadata checks (ci.yml, pr-policy.yml).
 ATTRIBUTION='co-authored-by:|(generated|written|created|made|authored) (with|by|using) \[?(the )?(claude|codex|chatgpt|gpt|copilot|openai|anthropic|(an? )?ai)\b|ai[- ]generated|🤖'
 
@@ -38,14 +37,18 @@ if [ -n "$BUNDLE" ]; then
   [ "$(git rev-list --count "$BASE..$tip" --not origin/main)" -le 100 ] || reject "Claude made more than 100 commits"
   # Commits that are not on main must be authored and committed by the Claude GitHub App and
   # pass the same message checks as CI, because published commits are never rewritten.
-  while IFS=$'\t' read -r commit an ae cn ce; do
-    [ "$an|$ae|$cn|$ce" = "$BOT_NAME|$BOT_EMAIL|$BOT_NAME|$BOT_EMAIL" ] \
+  # Identities are read from the raw commit headers, which cannot hide a field boundary.
+  ident="claude\[bot\] <41898282\+claude\[bot\]@users\.noreply\.github\.com> [0-9]+ [+-][0-9]{4}"
+  for commit in $(git rev-list "$BASE..$tip" --not origin/main); do
+    git cat-file commit "$commit" | sed '/^$/q' > "$RUNNER_TEMP/header"
+    [ "$(grep -c '^author ' "$RUNNER_TEMP/header")" = 1 ] && [ "$(grep -c '^committer ' "$RUNNER_TEMP/header")" = 1 ] \
+      && grep -Eqx "author $ident" "$RUNNER_TEMP/header" && grep -Eqx "committer $ident" "$RUNNER_TEMP/header" \
       || reject "Commit ${commit:0:7} is not authored and committed as $BOT_NAME"
     git cat-file commit "$commit" | sed '1,/^$/d' > "$RUNNER_TEMP/msg"
     sh .githooks/commit-msg "$RUNNER_TEMP/msg" >/dev/null 2>&1 \
       || reject "Commit ${commit:0:7} message is not one 'Type: Short description' line"
     ! grep -Eiq "$ATTRIBUTION" "$RUNNER_TEMP/msg" || reject "Commit ${commit:0:7} message contains AI self-attribution"
-  done < <(git log --format='%H%x09%an%x09%ae%x09%cn%x09%ce' "$BASE..$tip" --not origin/main)
+  done
   # Agents never change .github/, in any commit. A commit may change a file there only to the
   # version main had at that point (a merge of main).
   for commit in $(git rev-list "$BASE..$tip"); do
@@ -75,8 +78,9 @@ if [ "$MODE" = implement ] && { [ -n "$tip" ] || [ "$remote" = "$BASE" ]; } \
   [ -s "$RUNNER_TEMP/pr-body.md" ] || reject "Claude wrote no pull request description"
   ! cat "$RUNNER_TEMP/pr-title.txt" "$RUNNER_TEMP/pr-body.md" | grep -Eiq "$ATTRIBUTION" \
     || reject "Claude's pull request title or description contains AI self-attribution"
-  # Same rule as the PR metadata check: code and test changes name an existing specification.
-  if git diff --name-only "origin/main...$head" | grep -Eq '^(src|tests)/'; then
+  # Same rule as the PR metadata check: code and test changes, including files renamed out of
+  # src/ or tests/, name an existing specification.
+  if git diff --no-renames --name-only "origin/main...$head" | grep -Eq '^(src|tests)/'; then
     spec=$(grep -Eo 'Spec: specs/[0-9]{3}-[a-z0-9-]+' "$RUNNER_TEMP/pr-body.md" | head -1 | cut -c7- || true)
     { [ -n "$spec" ] && git cat-file -e "$head:$spec/spec.md" 2>/dev/null; } \
       || reject "Claude's pull request description has no 'Spec: specs/NNN-name' line for an existing specification"
