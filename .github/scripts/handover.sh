@@ -31,8 +31,24 @@ failed=""
 # committed .gitignore files exclude, and files marked assume-unchanged or skip-worktree.
 leftovers() {
   git -c core.fileMode=true status --porcelain --untracked-files=no
-  git ls-files --others --exclude-per-directory=.gitignore
+  git ls-files -z --others --exclude-per-directory=.gitignore | while IFS= read -r -d '' file; do
+    placeholder "$file" || printf '%s\n' "$file"
+  done
   git ls-files -v | grep -E '^([a-z]|S) ' || true
+}
+# The sandbox hides these files from Claude's commands by mounting over them, which leaves
+# empty files behind. Only commits are handed over, so these are never published.
+placeholder() {
+  case "${1##*/}" in
+    .gitconfig|.gitmodules|.bashrc|.bash_profile|.zshrc|.zprofile|.profile|.zshenv|.zlogin|\
+    .zlogout|.bash_login|.bash_aliases|.bash_logout|.envrc|.ripgreprc|.mcp.json|.claude.json|\
+    .npmrc|.yarnrc|.yarnrc.yml|.pnp.cjs|.pnp.loader.mjs|.pnpmfile.cjs|bunfig.toml|.bunfig.toml|\
+    .bazelrc|.bazelversion|.bazeliskrc|.pre-commit-config.yaml|lefthook.yml|.lefthook.yml|\
+    lefthook.yaml|.lefthook.yaml|gradle-wrapper.properties|maven-wrapper.properties|\
+    .devcontainer.json|pyrightconfig.json|package.json|package-lock.json|yarn.lock|pnpm-lock.yaml)
+      [ -f "$1" ] && [ ! -L "$1" ] && [ ! -s "$1" ] ;;
+    *) return 1 ;;
+  esac
 }
 if [ -z "$failed" ] && [ -n "$(leftovers)" ]; then
   leftovers | head -20
