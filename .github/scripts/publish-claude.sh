@@ -27,28 +27,38 @@ if [ -n "$BUNDLE" ]; then
   tip=$(git rev-parse FETCH_HEAD)
   git merge-base --is-ancestor "$BASE" "$tip" || reject "Claude's commits do not build on ${BASE:0:7}"
   [ "$(git rev-list --count "$BASE..$tip")" -le 100 ] || reject "Claude made more than 100 commits"
-  # Agents never change .github/. A file there may differ from the base only where it now
-  # matches main (brought in by merging main).
-  while IFS= read -r -d '' path; do
-    git diff --quiet origin/main "$tip" -- "$path" || reject "Claude changed .github/ ($path); agents never edit .github/"
-  done < <(git diff -z --no-renames --name-only "$BASE" "$tip" -- .github)
+  # Agents never change .github/, in any commit. A commit may change a file there only to the
+  # version main had at that point (a merge of main).
+  for commit in $(git rev-list "$BASE..$tip"); do
+    main_point=$(git merge-base "$commit" origin/main)
+    for parent in $(git rev-list --parents -n 1 "$commit" | cut -d' ' -f2-); do
+      while IFS= read -r -d '' path; do
+        git diff --quiet "$main_point" "$commit" -- "$path" \
+          || reject "Claude changed .github/ ($path) in ${commit:0:7}; agents never edit .github/"
+      done < <(git diff -z --no-renames --name-only "$parent" "$commit" -- .github)
+    done
+  done
 fi
 
 # The Claude GitHub App token, from the same exchange claude-code-action uses. It is
-# revoked when this script ends.
-oidc=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+# revoked when this script ends. Tokens reach curl and git through stdin and the
+# environment, never through command-line arguments.
+auth() { printf 'header = "Authorization: Bearer %s"\n' "$1"; }
+oidc=$(auth "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" | curl -sSf -K - \
   "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=claude-code-github-action" | jq -r .value)
-app=$(curl -sSf -X POST -H "Authorization: Bearer $oidc" \
+app=$(auth "$oidc" | curl -sSf -K - -X POST \
   https://api.anthropic.com/api/github/github-app-token-exchange | jq -r '.token // .app_token // empty')
+unset oidc
 [ -n "$app" ] || reject "Could not get the Claude GitHub App token"
 echo "::add-mask::$app"
-trap 'curl -sS -X DELETE -H "Authorization: Bearer $app" "$GITHUB_API_URL/installation/token" >/dev/null || true' EXIT
+trap 'auth "$app" | curl -sS -K - -X DELETE "$GITHUB_API_URL/installation/token" >/dev/null || true' EXIT
 
 published=no
 if [ -n "$tip" ]; then
   # A normal push: GitHub rejects it unless it only adds commits to the branch.
-  git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$app" | base64 -w0)" \
-    push -q origin "$tip:refs/heads/$BRANCH"
+  GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+    GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$app" | base64 -w0)" \
+    git push -q origin "$tip:refs/heads/$BRANCH"
   published=yes
   echo "Pushed ${tip:0:7} to $BRANCH"
 fi

@@ -7,6 +7,23 @@
 # CLAUDE_DENIED, CLAUDE_SETTINGS, and CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY.
 set -uo pipefail
 
+# Claude controls this repository's Git configuration, so never let it run a command here.
+git() { command git -c core.fsmonitor=false "$@"; }
+# Read a file Claude wrote only if it is a regular file with one link, without following
+# links, so it cannot point this trusted step at another file.
+read_handoff() {
+  python3 -I - "$1" "$2" <<'PY'
+import os, stat, sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+except OSError:
+    sys.exit(0)
+st = os.fstat(fd)
+if stat.S_ISREG(st.st_mode) and st.st_nlink == 1:
+    sys.stdout.buffer.write(os.read(fd, int(sys.argv[2])))
+PY
+}
+
 # Backstop: the workflow never passes a GitHub token to this step.
 unset GH_TOKEN GITHUB_TOKEN
 [ -n "${ANTHROPIC_API_KEY:-}" ] || unset ANTHROPIC_API_KEY
@@ -44,7 +61,8 @@ else
 fi
 for name in pr-title.txt:title:500 pr-body.md:body:20000 comment.md:comment:20000; do
   IFS=: read -r file key limit <<< "$name"
-  [ -s "$OUT/$file" ] && out "$key" "$(head -c "$limit" "$OUT/$file" | base64 -w0)"
+  value=$(read_handoff "$OUT/$file" "$limit" | base64 -w0)
+  [ -z "$value" ] || out "$key" "$value"
 done
 
 # Denied tool calls show their command; failed calls are only counted, because command
