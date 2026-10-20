@@ -9,16 +9,20 @@ on:
     types: [completed]
   issue_comment:
     types: [created, edited]
+  # Fallback: start the next queued task and catch events GitHub did not deliver.
+  schedule:
+    - cron: "17 * * * *"
 
 permissions: {}
 
 concurrency:
-  group: factory-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number }}
+  group: factory-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || 'queue' }}
   cancel-in-progress: false
 
 jobs:
   orchestrate:
     if: >-
+      github.event_name == 'schedule' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request') ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
        (github.event.comment.user.login == (vars.CODEX_REVIEWER_LOGIN || 'chatgpt-codex-connector[bot]') ||
@@ -47,6 +51,9 @@ jobs:
           CODEX_LOGIN: ${{ vars.CODEX_REVIEWER_LOGIN || 'chatgpt-codex-connector[bot]' }}
           CODEX_REVIEW: ${{ vars.CODEX_REVIEW || 'required' }}
         run: |
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            bash .github/scripts/next-task.sh; exit 0
+          fi
           if [ -z "$NUMBER" ] && [ -n "$HEAD_SHA" ]; then
             NUMBER=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" --jq '.[0].number // empty')
           fi

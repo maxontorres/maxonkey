@@ -140,9 +140,14 @@ if grep -q '^sensitive=' <<< "$result"; then eligible=false; fi
 if [ "$eligible" = true ] && { [ "$author" = "$OWNER" ] || [ "$author" = "claude[bot]" ]; }; then
   if gh pr merge "$NUMBER" --repo "$REPO" --rebase --match-head-commit "$head"; then
     echo "merged"
+    bash "$(dirname "$0")/next-task.sh" || true
+  elif [ "$claude_pr" = true ]; then
+    # Recoverable: main moved on. Claude merges main into its branch; its push re-runs CI.
+    gh workflow run claude.yml --repo "$REPO" -f pr="$NUMBER" -f reason=conflict
+    echo "dispatched correction: conflict"
   else
-    notify merge-failed "all checks passed but the automatic merge failed; see the pull request for conflicts."
+    notify merge-failed "all checks passed but the automatic merge failed; the branch needs updating from main."
   fi
   exit 0
 fi
-notify ready "CI and the Codex review passed on \`${head:0:7}\`. This change is not low-risk, so it needs your approval and merge."
+notify ready "CI and the Codex review passed on \`${head:0:7}\`. This change is security-sensitive, so it needs your approval and merge."
