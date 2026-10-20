@@ -7,8 +7,8 @@ name: Claude
 #
 # Claude works in a job without GitHub credentials: it edits files, runs builds and tests,
 # and commits locally. Its token is read-only and is never placed in Claude's environment,
-# the repository is cloned without credentials, and nothing that holds a token runs after
-# Claude in that job. A separate publish job checks Claude's commits and pushes them, opens
+# the repository is cloned without credentials, and nothing that holds a secret or a token
+# runs after Claude in that job. A separate publish job checks Claude's commits and pushes them, opens
 # the pull request, and posts Claude's comments with the Claude GitHub App token.
 on:
   issues:
@@ -81,12 +81,12 @@ jobs:
     outputs:
       run: ${{ steps.task.outputs.run }}
       base: ${{ steps.work.outputs.base }}
-      bundle: ${{ steps.claude.outputs.bundle }}
-      toobig: ${{ steps.claude.outputs.toobig }}
-      title: ${{ steps.claude.outputs.title }}
-      body: ${{ steps.claude.outputs.body }}
-      comment: ${{ steps.claude.outputs.comment }}
-      report: ${{ steps.claude.outputs.report }}
+      bundle: ${{ steps.handover.outputs.bundle }}
+      toobig: ${{ steps.handover.outputs.toobig }}
+      title: ${{ steps.handover.outputs.title }}
+      body: ${{ steps.handover.outputs.body }}
+      comment: ${{ steps.handover.outputs.comment }}
+      report: ${{ steps.handover.outputs.report }}
     steps:
       - name: Check the task is approved and next in line
         id: task
@@ -171,12 +171,22 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          BASE: ${{ steps.work.outputs.base }}
           PROMPT_FILE: ${{ runner.temp }}/claude-input/prompt.md
           IN: ${{ runner.temp }}/claude-input
           OUT: ${{ runner.temp }}/claude-output
-        # Last step of this job, so nothing Claude leaves behind can affect a later step.
+          LOG: ${{ runner.temp }}/claude-log.jsonl
         run: bash "$RUNNER_TEMP/trusted/run-claude.sh"
+      # No step after Claude holds a secret or a token, so nothing Claude leaves behind (Git
+      # settings, GITHUB_ENV entries) can reach one. The publish job checks these outputs.
+      - name: Hand over Claude's work
+        id: handover
+        if: always() && steps.task.outputs.run == 'true'
+        env:
+          CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
+          BASE: ${{ steps.work.outputs.base }}
+          OUT: ${{ runner.temp }}/claude-output
+          LOG: ${{ runner.temp }}/claude-log.jsonl
+        run: bash "$RUNNER_TEMP/trusted/handover.sh"
 
   implement-publish:
     needs: implement
@@ -317,10 +327,10 @@ jobs:
       # Set the repository variable after the first Codex review shows its account name.
       CODEX_LOGIN: ${{ vars.CODEX_REVIEWER_LOGIN || 'chatgpt-codex-connector[bot]' }}
     outputs:
-      bundle: ${{ steps.claude.outputs.bundle }}
-      toobig: ${{ steps.claude.outputs.toobig }}
-      comment: ${{ steps.claude.outputs.comment }}
-      report: ${{ steps.claude.outputs.report }}
+      bundle: ${{ steps.handover.outputs.bundle }}
+      toobig: ${{ steps.handover.outputs.toobig }}
+      comment: ${{ steps.handover.outputs.comment }}
+      report: ${{ steps.handover.outputs.report }}
     steps:
       - name: Clone the repository without credentials
         run: |
@@ -403,12 +413,22 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          BASE: ${{ needs.correct.outputs.sha }}
           PROMPT_FILE: ${{ runner.temp }}/claude-input/prompt.md
           IN: ${{ runner.temp }}/claude-input
           OUT: ${{ runner.temp }}/claude-output
-        # Last step of this job, so nothing Claude leaves behind can affect a later step.
+          LOG: ${{ runner.temp }}/claude-log.jsonl
         run: bash "$RUNNER_TEMP/trusted/run-claude.sh"
+      # No step after Claude holds a secret or a token, so nothing Claude leaves behind (Git
+      # settings, GITHUB_ENV entries) can reach one. The publish job checks these outputs.
+      - name: Hand over Claude's work
+        id: handover
+        if: always()
+        env:
+          CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
+          BASE: ${{ needs.correct.outputs.sha }}
+          OUT: ${{ runner.temp }}/claude-output
+          LOG: ${{ runner.temp }}/claude-log.jsonl
+        run: bash "$RUNNER_TEMP/trusted/handover.sh"
 
   correct-publish:
     needs: [correct, correct-claude]

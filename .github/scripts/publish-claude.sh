@@ -4,14 +4,21 @@
 # which only this trusted job holds; Claude never runs here. Everything that came from the
 # Claude job is untrusted data and is checked before use.
 # Needs REPO, MODE (implement|correct), BRANCH, BASE, NUMBER (issue or pull request),
-# BUNDLE, TITLE, BODY, COMMENT (base64), and id-token: write for the token exchange.
+# BUNDLE, TITLE, BODY, COMMENT (base64), GH_TOKEN (workflow token, read only here), and
+# id-token: write for the token exchange.
 set -euo pipefail
 # Paths below are file names, never pathspec patterns.
 export GIT_LITERAL_PATHSPECS=1
+BOT_NAME="claude[bot]"
+BOT_EMAIL="41898282+claude[bot]@users.noreply.github.com"
 
 decode() { printf '%s' "$1" | base64 -d 2>/dev/null || true; }
 result() { printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
-reject() { result reason "$1"; echo "::error::$1"; exit 1; }
+# Reasons can contain names Claude chose, so keep them to one printable line.
+reject() {
+  local reason; reason=$(printf '%s' "$1" | tr -c '[:print:]' ' ' | cut -c1-300)
+  result reason "$reason"; echo "::error::$reason"; exit 1
+}
 
 [[ "$BRANCH" =~ ^claude/[A-Za-z0-9._/-]+$ ]] || reject "Branch $BRANCH is not a claude/ branch"
 [[ "$BASE" =~ ^[0-9a-f]{40}$ ]] || reject "Missing base commit"
@@ -27,6 +34,11 @@ if [ -n "$BUNDLE" ]; then
   tip=$(git rev-parse FETCH_HEAD)
   git merge-base --is-ancestor "$BASE" "$tip" || reject "Claude's commits do not build on ${BASE:0:7}"
   [ "$(git rev-list --count "$BASE..$tip")" -le 100 ] || reject "Claude made more than 100 commits"
+  # Commits that are not on main must be authored and committed by the Claude GitHub App.
+  while IFS=$'\t' read -r commit an ae cn ce; do
+    [ "$an|$ae|$cn|$ce" = "$BOT_NAME|$BOT_EMAIL|$BOT_NAME|$BOT_EMAIL" ] \
+      || reject "Commit ${commit:0:7} is not authored and committed as $BOT_NAME"
+  done < <(git log --format='%H%x09%an%x09%ae%x09%cn%x09%ce' "$BASE..$tip" --not origin/main)
   # Agents never change .github/, in any commit. A commit may change a file there only to the
   # version main had at that point (a merge of main).
   for commit in $(git rev-list "$BASE..$tip"); do
@@ -38,6 +50,28 @@ if [ -n "$BUNDLE" ]; then
       done < <(git diff -z --no-renames --name-only "$parent" "$commit" -- .github)
     done
   done
+fi
+
+# Decide whether a pull request will be opened, also when an earlier attempt pushed the
+# branch but did not open it, and check its title and description before anything is pushed.
+head=${tip:-$BASE}
+remote=$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)
+open_pr=false
+if [ "$MODE" = implement ] && { [ -n "$tip" ] || [ "$remote" = "$BASE" ]; } \
+   && [ "$(git rev-list --count "origin/main..$head")" -gt 0 ] \
+   && [ -z "$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')" ]; then
+  open_pr=true
+  decode "$TITLE" | head -1 > "$RUNNER_TEMP/pr-title.txt"
+  sh .githooks/commit-msg "$RUNNER_TEMP/pr-title.txt" >/dev/null 2>&1 \
+    || reject "Claude's pull request title is not 'Type: Short description'"
+  decode "$BODY" > "$RUNNER_TEMP/pr-body.md"
+  [ -s "$RUNNER_TEMP/pr-body.md" ] || reject "Claude wrote no pull request description"
+  # Same rule as the PR metadata check: code and test changes name an existing specification.
+  if git diff --name-only "origin/main...$head" | grep -Eq '^(src|tests)/'; then
+    spec=$(grep -Eo 'Spec: specs/[0-9]{3}-[a-z0-9-]+' "$RUNNER_TEMP/pr-body.md" | head -1 | cut -c7- || true)
+    { [ -n "$spec" ] && git cat-file -e "$head:$spec/spec.md" 2>/dev/null; } \
+      || reject "Claude's pull request description has no 'Spec: specs/NNN-name' line for an existing specification"
+  fi
 fi
 
 # The Claude GitHub App token, from the same exchange claude-code-action uses. It is
@@ -63,19 +97,10 @@ if [ -n "$tip" ]; then
   echo "Pushed ${tip:0:7} to $BRANCH"
 fi
 
-# Open the pull request, also when an earlier attempt pushed the branch but did not open it.
-head=${tip:-$BASE}
-remote=$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)
-if [ "$MODE" = implement ] && [ "$remote" = "$head" ] && [ "$(git rev-list --count "origin/main..$head")" -gt 0 ]; then
-  pr=$(GH_TOKEN=$app gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
-  if [ -z "$pr" ]; then
-    title=$(decode "$TITLE" | head -1 | cut -c1-200)
-    decode "$BODY" > "$RUNNER_TEMP/pr-body.md"
-    [ -s "$RUNNER_TEMP/pr-body.md" ] || printf 'Closes #%s\n' "$NUMBER" > "$RUNNER_TEMP/pr-body.md"
-    GH_TOKEN=$app gh pr create --repo "$REPO" --base main --head "$BRANCH" \
-      --title "${title:-Chore: Implement issue #$NUMBER}" --body-file "$RUNNER_TEMP/pr-body.md"
-    published=yes
-  fi
+if [ "$open_pr" = true ]; then
+  GH_TOKEN=$app gh pr create --repo "$REPO" --base main --head "$BRANCH" \
+    --title "$(cat "$RUNNER_TEMP/pr-title.txt")" --body-file "$RUNNER_TEMP/pr-body.md"
+  published=yes
 fi
 
 if [ -n "$COMMENT" ]; then
