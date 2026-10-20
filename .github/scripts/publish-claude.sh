@@ -76,6 +76,9 @@ if [ "$MODE" = implement ] && { [ -n "$tip" ] || [ "$remote" = "$BASE" ]; } \
     || reject "Claude's pull request title is not 'Type: Short description'"
   decode "$BODY" > "$RUNNER_TEMP/pr-body.md"
   [ -s "$RUNNER_TEMP/pr-body.md" ] || reject "Claude wrote no pull request description"
+  # The merge must close the issue, or the task queue would keep selecting it.
+  grep -Eqi "^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?) #$NUMBER([^0-9]|$)" "$RUNNER_TEMP/pr-body.md" \
+    || reject "Claude's pull request description does not say 'Closes #$NUMBER'"
   ! cat "$RUNNER_TEMP/pr-title.txt" "$RUNNER_TEMP/pr-body.md" | grep -Eiq "$ATTRIBUTION" \
     || reject "Claude's pull request title or description contains AI self-attribution"
   # Same rule as the PR metadata check: code and test changes, including files renamed out of
