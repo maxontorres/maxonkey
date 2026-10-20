@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Run Claude Code in the current repository with no GitHub credentials, then hand its work
+# to the publish job as step outputs: its commits since BASE as a git bundle, the files it
+# wrote to OUT (pr-title.txt, pr-body.md, comment.md), and a short report.
+# Runs only in a Claude job of .github/workflows/claude.yml, whose token is read-only and is
+# never placed in this environment. Needs BASE, PROMPT_FILE, IN, OUT, CLAUDE_TOOLS,
+# CLAUDE_DENIED, CLAUDE_SETTINGS, and CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY.
+set -uo pipefail
+
+# Backstop: the workflow never passes a GitHub token to this step.
+unset GH_TOKEN GITHUB_TOKEN
+[ -n "${ANTHROPIC_API_KEY:-}" ] || unset ANTHROPIC_API_KEY
+[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || unset CLAUDE_CODE_OAUTH_TOKEN
+log="$RUNNER_TEMP/claude-log.jsonl"
+claude -p "$(cat "$PROMPT_FILE")" --verbose --output-format stream-json \
+  --add-dir "$IN" --add-dir "$OUT" \
+  --allowedTools "$CLAUDE_TOOLS" --disallowedTools "$CLAUDE_DENIED" \
+  --settings "$CLAUDE_SETTINGS" > "$log"
+status=$?
+unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
+echo "Claude exited with status $status"
+
+# Written last, so these values replace anything Claude wrote to the same outputs.
+out() { printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
+size=0
+if git bundle create "$RUNNER_TEMP/work.bundle" "$BASE..HEAD" 2>/dev/null; then
+  bundle=$(base64 -w0 < "$RUNNER_TEMP/work.bundle")
+  size=${#bundle}
+fi
+# GitHub limits a job's outputs to 1 MB in total.
+if [ "$size" -gt 800000 ]; then
+  out toobig true
+else
+  [ "$size" -eq 0 ] || out bundle "$bundle"
+fi
+for name in pr-title.txt:title pr-body.md:body comment.md:comment; do
+  file="$OUT/${name%%:*}"
+  [ -s "$file" ] && out "${name##*:}" "$(head -c 60000 "$file" | base64 -w0)"
+done
+
+# Denied tool calls show their command; failed calls are only counted, because command
+# output is not safe to publish.
+report=$(jq -rs '[.[] | select(.type == "result") | .permission_denials[]?
+    | "- `\(.tool_name)`: `\((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:150] | gsub("[`\n]"; " "))`"]
+    | unique | .[0:10] | if length > 0 then "Blocked tool calls:\n" + join("\n") else "" end' "$log" 2>/dev/null || true)
+errors=$(jq -rs '[.[] | select(.type == "user") | .message.content[]?
+    | select(.type? == "tool_result" and .is_error == true) | .content | tostring]
+    | select(length > 0) | "\(length) tool calls failed"
+      + (if any(.[]; test("bwrap")) then ", including sandbox (bubblewrap) errors" else "" end)
+      + "; see the log."' "$log" 2>/dev/null || true)
+report="Claude exit status: $status${report:+$'\n\n'$report}${errors:+$'\n\n'$errors}"
+out report "$(printf '%s' "$report" | head -c 4000 | base64 -w0)"
+exit 0
