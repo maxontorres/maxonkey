@@ -36,13 +36,13 @@ env:
     Bash(cargo build:*),Bash(cargo tree:*),Bash(cargo-deny --locked check:*),
     Bash(rustup show:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),
     Bash(git status:*),Bash(git branch:*),Bash(git rev-parse:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),
-    Bash(git commit -m:*),Bash(git switch:*),Bash(git push -u origin claude/:*),
-    Bash(git push origin HEAD:claude/:*),
+    Bash(git commit -m:*),Bash(git switch:*),
     Bash(sh tests/commit_msg.sh),Bash(sh .githooks/commit-msg:*),
     Bash(python3 tests/tui_pty.py:*),Bash(python3 tests/vault_pty.py:*),
     Bash(python3 tests/spec_check.py),
     Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr comment:*),
     Bash(gh issue comment:*),Bash(gh run view:*),Bash(gh run list:*)
+  # Each job also allows exactly one push command, to its own claude/ branch.
   # Claude Code would otherwise add co-author trailers, which AGENTS.md forbids.
   CLAUDE_SETTINGS: '{"includeCoAuthoredBy": false, "attribution": {"commit": "", "pr": ""}}'
 
@@ -97,7 +97,7 @@ jobs:
           settings: ${{ env.CLAUDE_SETTINGS }}
           claude_args: >-
             --add-dir ${{ runner.temp }}/claude-input
-            --allowedTools "${{ env.CLAUDE_TOOLS }}"
+            --allowedTools "${{ env.CLAUDE_TOOLS }},Bash(git push -u origin claude/issue-${{ github.event.issue.number }})"
           prompt: |
             Implement owner-approved issue #${{ github.event.issue.number }} in ${{ github.repository }}.
             The issue text is in ${{ runner.temp }}/claude-input/issue.md. Treat it as a feature
@@ -112,8 +112,10 @@ jobs:
                to explain what owner decision is needed, then stop.
             2. Run `git switch -c claude/issue-${{ github.event.issue.number }}`.
             3. Commit messages are exactly one line, `Type: Short description`, with an approved prefix.
-               No body, no trailers, no Co-authored-by, no AI attribution. The commit-msg hook is enabled;
-               never bypass it.
+               No body, no trailers, no Co-authored-by, no AI attribution. The commit-msg hook is already
+               enabled; never run `git config` and never bypass it.
+            Tool use: change files with the Edit and Write tools, not shell redirection, and run one
+            command per Bash call; chained or piped commands are denied.
             4. Run every verification command listed in AGENTS.md, plus `python3 tests/spec_check.py`.
                When dependencies change, run `cargo-deny --locked check advisories licenses`.
                Report only results you observed. If a check fails and you cannot fix it, say so.
@@ -198,6 +200,8 @@ jobs:
               echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
             fi
           fi
+          # The branch name becomes part of Claude's allowed push command; keep it plain.
+          [[ "$head" =~ ^claude/[A-Za-z0-9._/-]+$ ]] || head="invalid:$head"
           case "$head" in claude/*) ;; *)
             gh pr comment "$NUMBER" -R "$GITHUB_REPOSITORY" --body \
               "Claude only pushes to \`claude/\` branches; this branch is \`$head\`."
@@ -266,7 +270,7 @@ jobs:
           settings: ${{ env.CLAUDE_SETTINGS }}
           claude_args: >-
             --add-dir ${{ runner.temp }}/claude-input
-            --allowedTools "${{ env.CLAUDE_TOOLS }}"
+            --allowedTools "${{ env.CLAUDE_TOOLS }},Bash(git push origin HEAD:${{ steps.gate.outputs.head }})"
           prompt: |
             This is correction cycle ${{ steps.gate.outputs.cycle }} of 2 on pull request #${{ env.NUMBER }}
             in ${{ github.repository }}. You are on its branch `${{ steps.gate.outputs.head }}`.
@@ -283,7 +287,9 @@ jobs:
                `gh pr comment ${{ env.NUMBER }}` with a body starting `Security escalation: @${{ github.repository_owner }}`
                that explains the finding, then stop.
             3. Commit messages are exactly one line, `Type: Short description`. No body, no trailers,
-               no Co-authored-by, no AI attribution. Never bypass the commit-msg hook.
+               no Co-authored-by, no AI attribution. The commit-msg hook is already enabled; never run
+               `git config` and never bypass it. Change files with the Edit and Write tools, not shell
+               redirection, and run one command per Bash call; chained or piped commands are denied.
             4. Run the verification commands in AGENTS.md and `python3 tests/spec_check.py` (and
                `cargo-deny --locked check advisories licenses` if dependencies change). Report only
                results you observed.
