@@ -21,9 +21,10 @@ The shared rules for every agent are in [AGENTS.md](../AGENTS.md).
    specification it follows (for example `Spec: specs/002-encrypted-vault`) and adds
    the `claude:implement` label.
 2. **Claude Code implements it.** The [Claude workflow](../.github/workflows/claude.yml)
-   runs [Claude Code](https://github.com/anthropics/claude-code-action) on a GitHub-hosted
-   runner. Claude creates a `claude/issue-N` branch, follows the specification, runs the
-   project checks, and opens a pull request (PR) against `main`.
+   runs [Claude Code](https://code.claude.com/docs) on a GitHub-hosted runner. Claude
+   works on a `claude/issue-N` branch, follows the specification, runs the project checks,
+   and commits. Claude has no GitHub credentials: a separate publish job checks its commits,
+   pushes them, and opens a pull request (PR) against `main` as the Claude GitHub App.
 3. **CI runs.** The [Rust CI workflow](../.github/workflows/ci.yml) runs formatting,
    Clippy, tests, and release builds on Windows and Linux, the Linux terminal tests,
    dependency vulnerability and license checks, the commit-message check, a secret scan
@@ -109,7 +110,8 @@ You can also start a review comment with `@claude` when you submit a review. Bef
 Claude runs, the workflow collects your comments, Codex review comments, and the current
 check results into one findings file. Comments from any other account are left out.
 
-- Claude only pushes to `claude/` branches of this repository.
+- Claude's commits are published only to `claude/` branches of this repository, and never
+  when they change `.github/`.
 - Each run posts a "correction cycle N of 2" comment. After two, Claude stops and adds
   `needs-owner`. To allow more cycles, delete those cycle comments.
 - Serious security findings are not fixed automatically. Claude posts a comment starting
@@ -142,14 +144,20 @@ security-sensitive.
 ## Agent permissions
 
 - **Claude in GitHub Actions** may run any development command: Git (branch, commit,
-  push to its own `claude/` branch, open PRs), file creation, editing, and deletion,
-  Cargo including dependency installs, builds, and tests. A short deny list blocks force
-  pushes, pushes to `main`, `git config`, merging, approving, `gh api`, secrets, and
-  printing the environment. Secrets are removed from every command Claude runs, and those
-  commands run isolated on the runner.
-- **Real limits** do not depend on the agent following instructions: the Claude GitHub App
-  token cannot change workflow files and is not an administrator, the `main` ruleset
-  blocks direct pushes and requires the checks, and only the Factory (from `main`) merges.
+  merge), file creation, editing, and deletion, Cargo including dependency installs,
+  builds, and tests. It has no GitHub credentials: the Claude job's token is read-only and
+  never reaches Claude's environment, the repository is cloned without credentials, and
+  nothing that holds a token runs after Claude in that job. The Claude credential is removed
+  from every command Claude runs, and those commands run isolated on the runner.
+- **Publishing is a separate trusted job.** It takes Claude's commits as a Git bundle (a
+  file of commits) and checks that they build on the commit Claude started from, add only
+  to the branch, and leave `.github/` unchanged. Only then does it get the Claude GitHub
+  App token, push to the `claude/` branch, open the PR or post Claude's comment, and revoke
+  the token.
+- **Real limits** do not depend on the agent following instructions: Claude never holds a
+  GitHub token, the App token cannot change workflow files and is not an administrator,
+  the `main` ruleset blocks direct pushes and requires the checks, and only the Factory
+  (from `main`) merges.
 - **Interactive Claude Code sessions** use `.claude/settings.json`: routine development
   commands run without confirmation prompts; force pushes, `git config`, merges, approvals,
   secrets, and `.env` files stay blocked.
@@ -254,8 +262,8 @@ interrupted correction run, described below.
 
 | Component | File | Trigger | Writes |
 | --- | --- | --- | --- |
-| Claude: implement | [claude.yml](../.github/workflows/claude.yml) `implement` | owner labels issue `claude:implement`; Factory queue or retry (`workflow_dispatch`) | `claude/issue-N` branch, PR |
-| Claude: correct | [claude.yml](../.github/workflows/claude.yml) `correct` | Factory (CI failure, Codex findings, conflict) or owner `@claude` comment | commits on the PR branch |
+| Claude: implement | [claude.yml](../.github/workflows/claude.yml) `implement` (no credentials) + `implement-publish`; [run-claude.sh](../.github/scripts/run-claude.sh), [publish-claude.sh](../.github/scripts/publish-claude.sh) | owner labels issue `claude:implement`; Factory queue or retry (`workflow_dispatch`) | `claude/issue-N` branch, PR |
+| Claude: correct | [claude.yml](../.github/workflows/claude.yml) `correct` (cycle check) + `correct-claude` (no credentials) + `correct-publish` | Factory (CI failure, Codex findings, conflict) or owner `@claude` comment | commits on the PR branch |
 | CI | [ci.yml](../.github/workflows/ci.yml), [pr-policy.yml](../.github/workflows/pr-policy.yml) | pull request | check runs |
 | Risk labels | [pr-risk.yml](../.github/workflows/pr-risk.yml) + [classify-pr.sh](../.github/scripts/classify-pr.sh) | `pull_request_target` (runs from `main`) | labels, security notice |
 | Codex review | Codex GitHub integration (reviews every push) | pull request opened or updated | review comments, summary comment |
@@ -307,13 +315,10 @@ gets a "could not finish a correction" notice instead.
    one-line commit rule. Disable **Allow merge commits** (setup step 6).
 4. **The `main` ruleset is not configured** (setup step 7). Until it is, branch protection
    and required checks are not enforced by GitHub.
-5. **Claude's commands can read the GitHub token.** Secret scrubbing removes the Claude
-   credential from commands Claude runs, but by design it keeps `GH_TOKEN` so `git push`
-   and `gh pr create` work. That token is the Claude App installation token for this
-   repository only, it expires within an hour, and it cannot edit workflows. Claude reads
-   only owner-written issues, repository files, review findings, and web pages it fetches.
-   Removing the token from Claude's commands would need a separate trusted step to push and
-   open the PR. This is an owner decision.
+5. **Claude no longer holds a GitHub token** (fixed in #6). A separate publish job pushes
+   and opens PRs. Not yet confirmed live: the Claude App token exchange only works for
+   workflow files already on `main`. If the publish job fails, the owner notice says why.
+   The Claude jobs clone the repository without credentials, so they need it to stay public.
 6. **Codex fallback has no `OPENAI_API_KEY` secret.** If Codex skips a commit, the Factory
    reports that once instead of reviewing it with Codex CLI.
 
