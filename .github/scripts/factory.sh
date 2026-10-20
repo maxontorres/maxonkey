@@ -69,16 +69,47 @@ if [ "$CODEX_REVIEW" != off ]; then
     codex=findings
   fi
 fi
+
+if [ "$codex" = findings ]; then
+  # Owner override, bound to this exact commit: "/accept-codex <first 7 of the sha> <reason>".
+  # Only the owner account counts; a new commit needs a new decision.
+  if jq -e --arg o "$OWNER" --arg p "/accept-codex ${head:0:7}" \
+      'any(.[]; .user.login == $o and .author_association == "OWNER" and (.body | startswith($p)))' <<< "$comments" >/dev/null; then
+    codex=accepted
+  else
+    # A finding that cites a commit missing from this repository is unverified: it never
+    # starts an automatic correction. Findings without commit references count as verified.
+    findings=$(gh api --paginate "repos/$REPO/pulls/$NUMBER/comments" | jq -s --arg c "$CODEX_LOGIN" --arg h "$head" \
+      '[add // [] | .[] | select(.user.login == $c and .original_commit_id == $h) | .body]')
+    finding_count=$(jq length <<< "$findings")
+    verified=false
+    for ((k = 0; k < finding_count; k++)); do
+      ok=true
+      for ref in $(jq -r --argjson k "$k" '.[$k]' <<< "$findings" | grep -oE '`[0-9a-f]{7,40}`' | tr -d '`' | sort -u); do
+        gh api "repos/$REPO/commits/$ref" --jq .sha >/dev/null 2>&1 || ok=false
+      done
+      if [ "$ok" = true ]; then verified=true; fi
+    done
+    if [ "$finding_count" -gt 0 ] && [ "$verified" = false ]; then codex=unverified; fi
+  fi
+fi
 echo "pr=#$NUMBER head=$head author=$author ci=$ci codex=$codex"
 
 # Required check for manual merges: the head commit must have a clean independent review.
 case "$codex" in
+  accepted) rstate=success; rdesc="Owner accepted the Codex findings on this commit" ;;
+  unverified) rstate=failure; rdesc="Codex finding cites a commit not in this repository; owner decision needed" ;;
   passed) rstate=success; rdesc=$([ "$CODEX_REVIEW" = off ] && echo "Codex review disabled" || echo "Codex reviewed this commit with no open findings") ;;
   findings) rstate=failure; rdesc="Codex reported findings on this commit" ;;
   *) rstate=pending; rdesc="Waiting for a Codex review of this commit" ;;
 esac
 gh api "repos/$REPO/statuses/$head" -f state="$rstate" -f context="Independent review" -f description="$rdesc" >/dev/null
 
+if [ "$codex" = unverified ] && [ "$ci" != failed ]; then
+  notify unverified "Codex reported findings on \`${head:0:7}\` that cite a commit not in this repository, so no automatic correction ran. If they are false positives, comment \`/accept-codex ${head:0:7} <reason>\`; otherwise fix them or comment \`@claude\`."
+  exit 0
+fi
+[ "$codex" = accepted ] && codex=passed
 if [ "$ci" = failed ] || [ "$codex" = findings ]; then
   reason=$([ "$ci" = failed ] && echo ci || echo codex)
   if [ "$claude_pr" = true ]; then

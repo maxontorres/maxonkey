@@ -21,7 +21,9 @@ jobs:
     if: >-
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request') ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-       github.event.comment.user.login == (vars.CODEX_REVIEWER_LOGIN || 'chatgpt-codex-connector[bot]'))
+       (github.event.comment.user.login == (vars.CODEX_REVIEWER_LOGIN || 'chatgpt-codex-connector[bot]') ||
+        (github.event.comment.user.login == github.repository_owner &&
+         startsWith(github.event.comment.body, '/accept-codex '))))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
