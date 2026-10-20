@@ -249,7 +249,8 @@ Go to **Settings → Rules → Rulesets → New ruleset → New branch ruleset**
 ## Architecture and state
 
 All Factory state lives in GitHub, so nothing depends on a particular Claude or Codex
-session. Every component can stop and restart without losing progress.
+session. Most components can stop and restart without losing progress; the exception is an
+interrupted correction run, described below.
 
 | Component | File | Trigger | Writes |
 | --- | --- | --- | --- |
@@ -269,8 +270,11 @@ State that the Factory reads back on every run:
 - **Review state:** Codex's summary comment and the **Independent review** commit status.
 - **Owner notices:** one hidden `maxonkey-factory-status state=… sha=…` comment per state.
 
-The schedule re-checks every open PR and the queue, so a missed webhook, a runner restart,
-or an interrupted run is picked up again within about 15 minutes.
+The schedule re-checks every open PR and the queue, so a missed webhook or a runner restart
+is picked up again within about 15 minutes. An interrupted implementation run is picked up
+again too, because its issue stays in the queue until a PR exists. An interrupted correction
+run is not retried: its cycle comment already counts that commit as corrected, so the owner
+gets a "could not finish a correction" notice instead.
 
 ## Current status
 
@@ -291,7 +295,11 @@ or an interrupted run is picked up again within about 15 minutes.
 
 1. **Claude could not start with secret scrubbing on (issue #3, 06:56 UTC).** The runner had
    no `bubblewrap`, which `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` requires. `claude.yml` now
-   installs it before Claude runs. Not yet confirmed live.
+   installs it. A known upstream bug
+   ([claude-code-action#1547](https://github.com/anthropics/claude-code-action/issues/1547))
+   then fails every command with `bwrap: Can't create file at /home/.mcp.json`;
+   `claude.yml` creates that file in advance. Not yet confirmed live. If it still fails, the
+   owner notice lists the failed commands.
 2. **Scheduled Factory runs never fired** after the schedule was added. The schedule moved
    to minutes 7, 22, 37, and 52; changing the file makes GitHub register it again. Not yet
    confirmed live.
@@ -299,7 +307,14 @@ or an interrupted run is picked up again within about 15 minutes.
    one-line commit rule. Disable **Allow merge commits** (setup step 6).
 4. **The `main` ruleset is not configured** (setup step 7). Until it is, branch protection
    and required checks are not enforced by GitHub.
-5. **Codex fallback has no `OPENAI_API_KEY` secret.** If Codex skips a commit, the Factory
+5. **Claude's commands can read the GitHub token.** Secret scrubbing removes the Claude
+   credential from commands Claude runs, but by design it keeps `GH_TOKEN` so `git push`
+   and `gh pr create` work. That token is the Claude App installation token for this
+   repository only, it expires within an hour, and it cannot edit workflows. Claude reads
+   only owner-written issues, repository files, review findings, and web pages it fetches.
+   Removing the token from Claude's commands would need a separate trusted step to push and
+   open the PR. This is an owner decision.
+6. **Codex fallback has no `OPENAI_API_KEY` secret.** If Codex skips a commit, the Factory
    reports that once instead of reviewing it with Codex CLI.
 
 Merges made by the Factory do not start a new CI run on `main`, because GitHub does not
