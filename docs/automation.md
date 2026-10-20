@@ -29,16 +29,26 @@ The shared rules for every agent are in [AGENTS.md](../AGENTS.md).
    complete and Markdown links and heading anchors resolve.
 4. **PR policy runs.** The [PR policy workflow](../.github/workflows/pr-policy.yml)
    checks the PR title and description. The [PR risk workflow](../.github/workflows/pr-risk.yml)
-   labels the PR `low-risk` or `security-sensitive`, mentions the owner on
-   security-sensitive PRs, and turns on auto-merge only for low-risk PRs. PR risk always
-   runs the copy on `main`, so a PR cannot change the commands that hold write access.
-5. **Codex reviews independently**, once the owner connects it (see
-   [setup](#4-connect-codex-code-review)). Codex reads the `Code Review Rules` in
-   AGENTS.md and posts a normal GitHub review.
-6. **Corrections.** The owner can ask Claude to fix findings with an `@claude` comment.
-   At most two correction cycles run per PR; after that the PR is labeled `needs-owner`.
-7. **Merge.** Low-risk documentation PRs merge automatically after every required check
-   passes. Everything else waits for the owner's approval.
+   labels the PR `low-risk` or `security-sensitive` and mentions the owner on
+   security-sensitive PRs.
+5. **Codex reviews independently.** Codex reviews a new PR on its own. Codex reads the
+   `Code Review Rules` in AGENTS.md and posts a normal GitHub review.
+6. **The Factory decides the next step.** The [Factory workflow](../.github/workflows/factory.yml)
+   runs whenever CI or a Codex review finishes. For each PR it:
+   - asks Codex to review a new commit (`@codex review`) once CI is green, because new
+     commits do not start a Codex review by themselves;
+   - starts a Claude correction when CI fails or Codex reports findings on a Claude PR;
+   - sets the **Independent review** status: pending until Codex reviewed the current
+     commit, failed on findings, passed when clean;
+   - merges a low-risk PR when every required check and the Codex review pass;
+   - otherwise posts one comment that mentions you, when a PR is ready for your approval
+     or is blocked.
+7. **Corrections are limited.** Each PR gets at most two Claude correction cycles, and
+   each commit is corrected at most once. After that the PR is labeled `needs-owner`
+   and you get one comment.
+
+The PR risk, Factory, and Claude dispatch workflows always run their copy on `main`,
+so a pull request cannot change the commands that hold write access.
 
 Who can start the automation: only the repository owner. Issues written by other
 accounts, comments from other accounts, and forked PRs never start Claude.
@@ -66,8 +76,9 @@ recovery, or MCP behavior unless the specification and ADR already approve that 
 
 - **On the PR page:** the **Checks** section at the bottom lists every check with a
   green tick or red cross. Select **Details** to open the full log in the Actions tab.
-- **Labels:** `low-risk` (auto-merge eligible), `security-sensitive` (needs your
+- **Labels:** `low-risk` (merged automatically), `security-sensitive` (needs your
   approval), and `needs-owner` (automation stopped).
+- **Independent review** status on each commit shows whether Codex reviewed it.
 - **Security-sensitive PRs** get a comment that mentions you and lists the sensitive files.
 - **Codex** posts its findings as a PR review in the **Conversation** tab. A 👀 reaction
   means a review is running.
@@ -78,7 +89,8 @@ recovery, or MCP behavior unless the specification and ADR already approve that 
 
 ## Ask Claude for corrections
 
-Comment on the PR, starting with `@claude`, for example:
+Corrections for CI failures and Codex findings on Claude's own PRs start automatically.
+To ask for something else, comment on the PR, starting with `@claude`, for example:
 
 ```text
 @claude Fix the Clippy failure and the Codex finding about the error message.
@@ -100,11 +112,12 @@ Use `@claude`, not `@codex`, for fixes, so the two-cycle limit applies.
 
 | Change | Merge |
 | --- | --- |
-| Only `README.md`, `docs/product.md`, or `docs/ui-design.md` (the unowned lines in [CODEOWNERS](../.github/CODEOWNERS)), opened by you or the Claude GitHub App | Automatic after all required checks pass |
+| Only `README.md`, `docs/product.md`, or `docs/ui-design.md` (the unowned lines in [CODEOWNERS](../.github/CODEOWNERS)), opened by you or the Claude GitHub App | Merged by the Factory after all required checks and the Codex review pass |
 | Anything else | Requires your approval through the code-owner rule |
-| Cryptography, secrets, authentication, recovery, MCP, permissions, dependencies, workflows, agent rules, security docs, specifications | Labeled `security-sensitive`; auto-merge is turned off; needs your approval and a Codex review |
+| Cryptography, secrets, authentication, recovery, MCP, permissions, dependencies, workflows, agent rules, security docs, specifications | Labeled `security-sensitive`; never merged automatically; needs your approval and a passing **Independent review** status |
 
-Auto-merge uses **rebase** so the validated one-line commits land on `main` unchanged.
+The Factory merges with **rebase** so the validated one-line commits land on `main`
+unchanged, and only if the PR head is still the commit it checked.
 The low-risk list is read from `main`, so a PR cannot make itself eligible. To change
 the list, edit the unowned lines in CODEOWNERS (that edit itself needs your approval).
 
@@ -120,10 +133,8 @@ Claude workflow. Each step is done in the GitHub or ChatGPT website by the owner
 
 ### 1. Make `main` the default branch
 
-The default branch is currently `001-project-initialization`. GitHub runs issue and
-comment workflows from the default branch, so the Claude workflow cannot start until
-`main` is the default. Go to **Settings → General → Default branch**, select the switch
-icon, choose `main`, and confirm.
+Done. GitHub runs issue, comment, and Factory workflows from the default branch, so it
+must stay `main` (**Settings → General → Default branch**).
 
 ### 2. Install the Claude GitHub App
 
@@ -157,22 +168,19 @@ Paste the value only into the GitHub secret form. Never put it in a file, issue,
    Actions → Variables**, so Claude receives Codex findings.
 
 Codex code review requires a ChatGPT plan that includes Codex; check current plan details
-on the OpenAI site. **Manual trigger:** comment `@codex review` on any PR. The
-security-sensitive escalation comment contains that phrase, and Codex responded to it on
-#2, so security-sensitive PRs request a Codex review automatically. Do this on
-security-sensitive PRs whenever a new commit arrives after the last Codex review.
+on the OpenAI site. The Factory requests a Codex review for each new commit after CI
+passes. **Manual trigger:** comment `@codex review` on any PR.
 
 ### 5. Create the trigger label
 
 Go to **Issues → Labels → New label** and create `claude:implement`. The other labels
 (`low-risk`, `security-sensitive`, `needs-owner`) are created automatically.
 
-### 6. Allow auto-merge and rebase merging
+### 6. Merge settings
 
-In **Settings → General → Pull Requests**: enable **Allow rebase merging** and **Allow
-auto-merge**. Disable **Allow merge commits**, because "Merge pull request #N" messages
-break the commit convention. Squash merging can stay on for manual use if you edit the
-message to one line.
+In **Settings → General → Pull Requests**: keep **Allow rebase merging** on. Disable
+**Allow merge commits**, because "Merge pull request #N" messages break the commit
+convention. GitHub's **Allow auto-merge** is not needed; the Factory merges itself.
 
 ### 7. Protect `main` with a ruleset
 
@@ -187,8 +195,8 @@ Go to **Settings → Rules → Rulesets → New ruleset → New branch ruleset**
   when new commits are pushed**. Under allowed merge methods, keep **Rebase** (and
   **Squash** if you use it manually).
 - Enable **Require status checks to pass** and add: `Verify (ubuntu-latest)`,
-  `Verify (windows-latest)`, `Repository policy`, and `PR metadata`. These names appear
-  after the checks have run once on a PR.
+  `Verify (windows-latest)`, `Repository policy`, `PR metadata`, and `Independent review`.
+  These names appear after the checks have run once on a PR.
 
 ### 8. Recommended GitHub security settings
 
@@ -211,7 +219,7 @@ Go to **Settings → Rules → Rulesets → New ruleset → New branch ruleset**
 | Codex review | **Not yet operational.** The Codex connector is installed and replied on #2 as `chatgpt-codex-connector[bot]`, asking for a Codex cloud environment for this repository (setup step 4). No review has run yet. |
 | Ruleset, code-owner approval, auto-merge | **Not yet configured.** Needs steps 6–7 in the GitHub settings. |
 
-Merges made by auto-merge do not start a new CI run on `main`, because GitHub does not
+Merges made by the Factory do not start a new CI run on `main`, because GitHub does not
 trigger workflows from its own workflow token. The PR's checks already tested the result.
 
 ## Troubleshooting
@@ -224,5 +232,5 @@ trigger workflows from its own workflow token. The PR's checks already tested th
   `Type: Short description`. Rewrite the commit on its branch before merging.
 - **`PR metadata` fails:** fix the PR title, remove AI attribution from the description,
   or add a `Spec: specs/NNN-name` line for code changes.
-- **Auto-merge was not enabled:** the run log shows a warning when **Allow auto-merge** is
-  off in repository settings.
+- **A low-risk PR did not merge:** open the latest **Factory** run. It prints the CI and
+  Codex state it saw, for example `ci=passed codex=pending`.
