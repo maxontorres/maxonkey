@@ -137,6 +137,12 @@ jobs:
           if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
+          # The sandbox hides .mcp.json files above the workspace and fails every command when it
+          # cannot create one in a root-owned folder (anthropics/claude-code-action#1547).
+          for dir in / /home; do
+            [ -e "$dir/.mcp.json" ] || echo '{"mcpServers": {}}' | sudo tee "$dir/.mcp.json" >/dev/null
+          done
+          bwrap --ro-bind / / --dev /dev true
       - id: claude
         if: steps.task.outputs.run == 'true'
         uses: anthropics/claude-code-action@5eb090f3c3afd701a0672cd32981197ca27688f6 # v1.0.253
@@ -210,9 +216,13 @@ jobs:
             denied=$(jq -r '[.[] | select(.type == "result") | .permission_denials[]?
               | "- `\(.tool_name)`: `\((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:150])`"]
               | unique | .[0:10] | join("\n")' "$EXECUTION_FILE" 2>/dev/null || true)
+            errors=$(jq -r '[.[] | select(.type == "user") | .message.content[]?
+              | select(.type? == "tool_result" and .is_error == true) | .content | tostring
+              | "- `\(.[0:150] | gsub("[`\n]"; " "))`"] | unique | .[0:5] | join("\n")' "$EXECUTION_FILE" 2>/dev/null || true)
+            denied="${denied:+Blocked tool calls:$'\n'$denied}${errors:+${denied:+$'\n\n'}Failed tool calls:$'\n'$errors}"
           fi
           gh issue comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body \
-            "@$GITHUB_REPOSITORY_OWNER Claude could not finish this issue after 2 attempts. Log: $RUN${denied:+$'\n\n'Blocked tool calls:$'\n'$denied}"
+            "@$GITHUB_REPOSITORY_OWNER Claude could not finish this issue after 2 attempts. Log: $RUN${denied:+$'\n\n'$denied}"
 
   correct:
     if: >-
@@ -337,6 +347,12 @@ jobs:
           if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
+          # The sandbox hides .mcp.json files above the workspace and fails every command when it
+          # cannot create one in a root-owned folder (anthropics/claude-code-action#1547).
+          for dir in / /home; do
+            [ -e "$dir/.mcp.json" ] || echo '{"mcpServers": {}}' | sudo tee "$dir/.mcp.json" >/dev/null
+          done
+          bwrap --ro-bind / / --dev /dev true
       - id: claude
         uses: anthropics/claude-code-action@5eb090f3c3afd701a0672cd32981197ca27688f6 # v1.0.253
         if: steps.gate.outputs.run == 'true'
@@ -379,8 +395,10 @@ jobs:
                `gh pr comment ${{ env.NUMBER }}` listing what you fixed, what you did not fix and why,
                and the checks you actually ran.
             6. Never merge, approve, enable auto-merge, change labels, or edit files under .github/.
-      - name: Notify the owner of a failed run
-        if: failure()
+      - name: Notify the owner of a failed or cancelled run
+        # The cycle comment above already counts this attempt, so tell the owner instead of
+        # leaving the commit silently uncorrected.
+        if: failure() || cancelled()
         env:
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
@@ -390,6 +408,10 @@ jobs:
             denied=$(jq -r '[.[] | select(.type == "result") | .permission_denials[]?
               | "- `\(.tool_name)`: `\((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:150])`"]
               | unique | .[0:10] | join("\n")' "$EXECUTION_FILE" 2>/dev/null || true)
+            errors=$(jq -r '[.[] | select(.type == "user") | .message.content[]?
+              | select(.type? == "tool_result" and .is_error == true) | .content | tostring
+              | "- `\(.[0:150] | gsub("[`\n]"; " "))`"] | unique | .[0:5] | join("\n")' "$EXECUTION_FILE" 2>/dev/null || true)
+            denied="${denied:+Blocked tool calls:$'\n'$denied}${errors:+${denied:+$'\n\n'}Failed tool calls:$'\n'$errors}"
           fi
           gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body \
-            "@$OWNER Claude could not finish a correction on this pull request. Log: $RUN${denied:+$'\n\n'Blocked tool calls:$'\n'$denied}"
+            "@$OWNER Claude could not finish a correction on this pull request. Log: $RUN${denied:+$'\n\n'$denied}"
