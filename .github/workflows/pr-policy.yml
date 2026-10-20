@@ -42,7 +42,7 @@ jobs:
             echo "::error::PR title must be 'Type: Short description'"
             status=1
           fi
-          attribution='co-authored-by:|generated (with|by) \[?(claude|codex|chatgpt|an? ai)|written by (claude|codex)|created with (claude|codex)|🤖'
+          attribution='co-authored-by:|(generated|written|created|made|authored) (with|by|using) \[?(the )?(claude|codex|chatgpt|gpt|copilot|openai|anthropic|(an? )?ai)\b|ai[- ]generated|🤖'
           if printf '%s\n%s\n' "$TITLE" "$BODY" | grep -Eiq "$attribution"; then
             echo "::error::Remove AI self-attribution from the PR title or description (AGENTS.md Rule 2)"
             status=1
