@@ -10,8 +10,9 @@ on:
   issue_comment:
     types: [created, edited]
   # Fallback: start the next queued task and catch events GitHub did not deliver.
+  # Off the quarter hour, when GitHub is less likely to delay or drop scheduled runs.
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "7,22,37,52 * * * *"
 
 permissions: {}
 
