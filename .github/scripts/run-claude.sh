@@ -12,13 +12,21 @@ unset GH_TOKEN GITHUB_TOKEN
 [ -n "${ANTHROPIC_API_KEY:-}" ] || unset ANTHROPIC_API_KEY
 [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || unset CLAUDE_CODE_OAUTH_TOKEN
 log="$RUNNER_TEMP/claude-log.jsonl"
+# Settings, hooks, and MCP servers come only from this workflow, never from the checked-out
+# branch (a pull request branch may change .claude/ or .mcp.json).
 claude -p "$(cat "$PROMPT_FILE")" --verbose --output-format stream-json \
+  --setting-sources user --strict-mcp-config \
   --add-dir "$IN" --add-dir "$OUT" \
   --allowedTools "$CLAUDE_TOOLS" --disallowedTools "$CLAUDE_DENIED" \
   --settings "$CLAUDE_SETTINGS" > "$log"
 status=$?
 unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
 echo "Claude exited with status $status"
+# Only committed work is handed over, so anything left uncommitted fails the run.
+if [ "$status" = 0 ] && [ -n "$(git status --porcelain)" ]; then
+  echo "::error::Claude left uncommitted changes:"; git status --short | head -20
+  status=1
+fi
 
 # Written last, so these values replace anything Claude wrote to the same outputs.
 out() { printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
@@ -49,7 +57,8 @@ errors=$(jq -rs '[.[] | select(.type == "user") | .message.content[]?
     | select(length > 0) | "\(length) tool calls failed"
       + (if any(.[]; test("bwrap")) then ", including sandbox (bubblewrap) errors" else "" end)
       + "; see the log."' "$log" 2>/dev/null || true)
-report="Claude exit status: $status${report:+$'\n\n'$report}${errors:+$'\n\n'$errors}"
+dirty=$([ -n "$(git status --porcelain)" ] && echo "Claude left uncommitted changes, so nothing was published.")
+report="Claude exit status: $status${dirty:+$'\n\n'$dirty}${report:+$'\n\n'$report}${errors:+$'\n\n'$errors}"
 out report "$(printf '%s' "$report" | head -c 4000 | base64 -w0)"
 # A failed run is not published: the outputs above are kept for the owner notice, and the
 # failed step sends the publish job to its retry and notice path.
