@@ -14,3 +14,5 @@ MCP plaintext reads and secret creation, updates, and deletion require owner app
 Task 001 delivered CLI information commands and Dashboard, Help, and About screens.
 Task 002B adds vault creation, passphrase change, and recovery-key recovery. Secret
 storage, organization, backup, MCP, and sharing remain unavailable.
+
+See also: [Development roadmap](../README.md#development-roadmap).
