@@ -32,16 +32,9 @@
       "Bash(gh run view:*)",
       "Bash(gh run list:*)",
       "Bash(ls:*)",
-      "Bash(cat:*)",
-      "Bash(head:*)",
-      "Bash(tail:*)",
-      "Bash(grep:*)",
-      "Bash(find:*)",
       "Bash(wc:*)",
       "Bash(mkdir:*)",
-      "Bash(rm:*)",
-      "Bash(mv:*)",
-      "Bash(cp:*)"
+      "Bash(rm:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",

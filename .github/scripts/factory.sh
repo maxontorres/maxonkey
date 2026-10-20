@@ -164,12 +164,15 @@ if [ "$eligible" = true ] && { [ "$author" = "$OWNER" ] || [ "$author" = "claude
   if gh pr merge "$NUMBER" --repo "$REPO" --rebase --match-head-commit "$head"; then
     echo "merged"
     bash "$(dirname "$0")/next-task.sh" || true
-  elif [ "$claude_pr" = true ]; then
-    # Recoverable: main moved on. Claude merges main into its branch; its push re-runs CI.
-    gh workflow run claude.yml --repo "$REPO" -f pr="$NUMBER" -f reason=conflict
-    echo "dispatched correction: conflict"
   else
-    notify merge-failed "all checks passed but the automatic merge failed; the branch needs updating from main."
+    state=$(gh api "repos/$REPO/pulls/$NUMBER" --jq .mergeable_state)
+    if [ "$claude_pr" = true ] && { [ "$state" = dirty ] || [ "$state" = behind ]; }; then
+      # Recoverable: main moved on. Claude merges main into its branch; its push re-runs CI.
+      gh workflow run claude.yml --repo "$REPO" -f pr="$NUMBER" -f reason=conflict
+      echo "dispatched correction: conflict ($state)"
+    else
+      notify merge-failed "all checks passed but the automatic merge failed (GitHub merge state: ${state:-unknown}). This is not a conflict automation can fix."
+    fi
   fi
   exit 0
 fi

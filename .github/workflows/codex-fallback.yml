@@ -55,6 +55,9 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
+          # The Factory dispatches this run as github-actions[bot]; the job condition above
+          # already limits who can start it.
+          allow-bots: true
           output-schema: |
             {
               "type": "object",
