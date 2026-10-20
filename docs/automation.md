@@ -146,14 +146,18 @@ security-sensitive.
 - **Claude in GitHub Actions** may run any development command: Git (branch, commit,
   merge), file creation, editing, and deletion, Cargo including dependency installs,
   builds, and tests. It has no GitHub credentials: the Claude job's token is read-only and
-  never reaches Claude's environment, the repository is cloned without credentials, and
-  nothing that holds a token runs after Claude in that job. The Claude credential is removed
-  from every command Claude runs, and those commands run isolated on the runner.
+  never reaches Claude's environment, and the repository is cloned without credentials.
+  Branch files never configure Claude: project settings, hooks, MCP servers, and CLAUDE.md
+  files are not loaded. The Claude credential is removed from every command Claude runs, and
+  those commands run isolated on the runner. A separate handover step, which never receives
+  the Claude credential or a token, packages Claude's committed work; uncommitted changes or
+  a failed run are never published.
 - **Publishing is a separate trusted job.** It takes Claude's commits as a Git bundle (a
   file of commits) and checks that they build on the commit Claude started from, add only
-  to the branch, and leave `.github/` unchanged. Only then does it get the Claude GitHub
+  to the branch, are authored as `claude[bot]`, and never change `.github/` in any commit.
+  It also checks the PR title and its `Spec:` line. Only then does it get the Claude GitHub
   App token, push to the `claude/` branch, open the PR or post Claude's comment, and revoke
-  the token.
+  the token. A rejected handover takes the retry and owner-notice path.
 - **Real limits** do not depend on the agent following instructions: Claude never holds a
   GitHub token, the App token cannot change workflow files and is not an administrator,
   the `main` ruleset blocks direct pushes and requires the checks, and only the Factory
@@ -262,7 +266,7 @@ interrupted correction run, described below.
 
 | Component | File | Trigger | Writes |
 | --- | --- | --- | --- |
-| Claude: implement | [claude.yml](../.github/workflows/claude.yml) `implement` (no credentials) + `implement-publish`; [run-claude.sh](../.github/scripts/run-claude.sh), [publish-claude.sh](../.github/scripts/publish-claude.sh) | owner labels issue `claude:implement`; Factory queue or retry (`workflow_dispatch`) | `claude/issue-N` branch, PR |
+| Claude: implement | [claude.yml](../.github/workflows/claude.yml) `implement` (no credentials) + `implement-publish`; [run-claude.sh](../.github/scripts/run-claude.sh), [handover.sh](../.github/scripts/handover.sh), [publish-claude.sh](../.github/scripts/publish-claude.sh) | owner labels issue `claude:implement`; Factory queue or retry (`workflow_dispatch`) | `claude/issue-N` branch, PR |
 | Claude: correct | [claude.yml](../.github/workflows/claude.yml) `correct` (cycle check) + `correct-claude` (no credentials) + `correct-publish` | Factory (CI failure, Codex findings, conflict) or owner `@claude` comment | commits on the PR branch |
 | CI | [ci.yml](../.github/workflows/ci.yml), [pr-policy.yml](../.github/workflows/pr-policy.yml) | pull request | check runs |
 | Risk labels | [pr-risk.yml](../.github/workflows/pr-risk.yml) + [classify-pr.sh](../.github/scripts/classify-pr.sh) | `pull_request_target` (runs from `main`) | labels, security notice |
