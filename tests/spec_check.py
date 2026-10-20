@@ -3,7 +3,7 @@
 
 1. Every feature folder in specs/ has spec.md, plan.md, and tasks.md.
 2. AGENTS.md names an existing feature folder as the current scope.
-3. Relative Markdown links in tracked files point to existing files.
+3. Relative Markdown links in tracked files point to existing files and headings.
 """
 import re
 import subprocess
@@ -16,6 +16,33 @@ REQUIRED = ("spec.md", "plan.md", "tasks.md")
 SKIP_PREFIXES = (".specify/", ".agents/")
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 FENCE = re.compile(r"^\s*(```|~~~)")
+HEADING = re.compile(r"^#{1,6}\s+(.*?)\s*#*\s*$")
+_anchors = {}
+
+
+def outside_fences(text):
+    in_fence = False
+    for number, line in enumerate(text.splitlines(), 1):
+        if FENCE.match(line):
+            in_fence = not in_fence
+        elif not in_fence:
+            yield number, line
+
+
+def anchors(file):
+    """Heading anchors as GitHub generates them, including -1, -2 for repeats."""
+    if file not in _anchors:
+        found, seen = set(), {}
+        for _, line in outside_fences(file.read_text(encoding="utf-8")):
+            match = HEADING.match(line)
+            if not match:
+                continue
+            slug = re.sub(r"[^\w\- ]", "", match.group(1).lower()).replace(" ", "-")
+            count = seen.get(slug, 0)
+            seen[slug] = count + 1
+            found.add(slug if count == 0 else f"{slug}-{count}")
+        _anchors[file] = found
+    return _anchors[file]
 
 
 def tracked_markdown():
@@ -27,19 +54,17 @@ def tracked_markdown():
 
 def broken_links(path):
     problems = []
-    in_fence = False
-    for number, line in enumerate((ROOT / path).read_text(encoding="utf-8").splitlines(), 1):
-        if FENCE.match(line):
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            continue
+    source = ROOT / path
+    for number, line in outside_fences(source.read_text(encoding="utf-8")):
         for target in LINK.findall(line):
-            if re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I) or target.startswith("#"):
+            if re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I):
                 continue
-            file_part = target.split("#", 1)[0]
-            if not (ROOT / path).parent.joinpath(file_part).resolve().exists():
+            file_part, _, fragment = target.partition("#")
+            file = source.parent.joinpath(file_part).resolve() if file_part else source
+            if not file.exists():
                 problems.append(f"{path}:{number}: missing link target {target}")
+            elif fragment and file.suffix == ".md" and fragment.lower() not in anchors(file):
+                problems.append(f"{path}:{number}: missing heading #{fragment}")
     return problems
 
 
@@ -62,7 +87,7 @@ def main():
         print(f"FAIL: {problem}", file=sys.stderr)
     if problems:
         return 1
-    print(f"PASS: {len(features)} specifications and Markdown links checked")
+    print(f"PASS: {len(features)} specifications, Markdown links, and heading anchors checked")
     return 0
 
 
