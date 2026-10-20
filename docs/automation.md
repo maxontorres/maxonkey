@@ -10,7 +10,9 @@ The shared rules for every agent are in [AGENTS.md](../AGENTS.md).
 - [Ask Claude for corrections](#ask-claude-for-corrections)
 - [Merge policy](#merge-policy)
 - [One-time setup](#one-time-setup)
-- [What is verified](#what-is-verified)
+- [Architecture and state](#architecture-and-state)
+- [Current status](#current-status)
+- [Open issues](#open-issues)
 - [Troubleshooting](#troubleshooting)
 
 ## How it works
@@ -19,9 +21,10 @@ The shared rules for every agent are in [AGENTS.md](../AGENTS.md).
    specification it follows (for example `Spec: specs/002-encrypted-vault`) and adds
    the `claude:implement` label.
 2. **Claude Code implements it.** The [Claude workflow](../.github/workflows/claude.yml)
-   runs [Claude Code](https://github.com/anthropics/claude-code-action) on a GitHub-hosted
-   runner. Claude creates a `claude/issue-N` branch, follows the specification, runs the
-   project checks, and opens a pull request (PR) against `main`.
+   runs [Claude Code](https://code.claude.com/docs) on a GitHub-hosted runner. Claude
+   works on a `claude/issue-N` branch, follows the specification, runs the project checks,
+   and commits. Claude has no GitHub credentials: a separate publish job checks its commits,
+   pushes them, and opens a pull request (PR) against `main` as the Claude GitHub App.
 3. **CI runs.** The [Rust CI workflow](../.github/workflows/ci.yml) runs formatting,
    Clippy, tests, and release builds on Windows and Linux, the Linux terminal tests,
    dependency vulnerability and license checks, the commit-message check, a secret scan
@@ -107,7 +110,8 @@ You can also start a review comment with `@claude` when you submit a review. Bef
 Claude runs, the workflow collects your comments, Codex review comments, and the current
 check results into one findings file. Comments from any other account are left out.
 
-- Claude only pushes to `claude/` branches of this repository.
+- Claude's commits are published only to `claude/` branches of this repository, and never
+  when they change `.github/`.
 - Each run posts a "correction cycle N of 2" comment. After two, Claude stops and adds
   `needs-owner`. To allow more cycles, delete those cycle comments.
 - Serious security findings are not fixed automatically. Claude posts a comment starting
@@ -140,14 +144,24 @@ security-sensitive.
 ## Agent permissions
 
 - **Claude in GitHub Actions** may run any development command: Git (branch, commit,
-  push to its own `claude/` branch, open PRs), file creation, editing, and deletion,
-  Cargo including dependency installs, builds, and tests. A short deny list blocks force
-  pushes, pushes to `main`, `git config`, merging, approving, `gh api`, secrets, and
-  printing the environment. Secrets are removed from every command Claude runs, and those
-  commands run isolated on the runner.
-- **Real limits** do not depend on the agent following instructions: the Claude GitHub App
-  token cannot change workflow files and is not an administrator, the `main` ruleset
-  blocks direct pushes and requires the checks, and only the Factory (from `main`) merges.
+  merge), file creation, editing, and deletion, Cargo including dependency installs,
+  builds, and tests. It has no GitHub credentials: the Claude job's token is read-only and
+  never reaches Claude's environment, and the repository is cloned without credentials.
+  Branch files never configure Claude: project settings, hooks, MCP servers, and CLAUDE.md
+  files are not loaded. The Claude credential is removed from every command Claude runs, and
+  those commands run isolated on the runner. A separate handover step, which never receives
+  the Claude credential or a token, packages Claude's committed work; uncommitted changes or
+  a failed run are never published.
+- **Publishing is a separate trusted job.** It takes Claude's commits as a Git bundle (a
+  file of commits) and checks that they build on the commit Claude started from, add only
+  to the branch, are authored as `claude[bot]`, and never change `.github/` in any commit.
+  It also checks the PR title and its `Spec:` line. Only then does it get the Claude GitHub
+  App token, push to the `claude/` branch, open the PR or post Claude's comment, and revoke
+  the token. A rejected handover takes the retry and owner-notice path.
+- **Real limits** do not depend on the agent following instructions: Claude never holds a
+  GitHub token, the App token cannot change workflow files and is not an administrator,
+  the `main` ruleset blocks direct pushes and requires the checks, and only the Factory
+  (from `main`) merges.
 - **Interactive Claude Code sessions** use `.claude/settings.json`: routine development
   commands run without confirmation prompts; force pushes, `git config`, merges, approvals,
   secrets, and `.env` files stay blocked.
@@ -244,18 +258,73 @@ Go to **Settings → Rules → Rulesets → New ruleset → New branch ruleset**
   **Allow GitHub Actions to create and approve pull requests** turned off. Keep
   **Require approval for first-time contributors** for fork PRs.
 
-## What is verified
+## Architecture and state
 
-| Part | Status |
-| --- | --- |
-| Rust CI on Windows and Ubuntu | Passed on GitHub runners for the PR that added this automation (#2). |
-| CI policy job (commit messages, gitleaks 8.30.1 secret scan, spec and link check) | Passed on a GitHub runner (#2); also run locally against the full history. |
-| PR risk classification | Observed on #2 while it ran as part of PR policy: labeled it `security-sensitive`, posted the owner escalation comment, and left auto-merge off. It now runs from `main` through `pull_request_target`, so it first runs in that form on the next PR after #2 merges. Other cases (docs-only, mixed, cryptography, CLI, MCP, non-owner, stale notice) exercised locally with a simulated GitHub CLI. |
-| PR policy: metadata | Observed on #2: failed on an AI attribution footer added by the tool that created the PR, as intended. Title and spec rules exercised locally. |
-| Workflow syntax | `actionlint` 1.7.12 with ShellCheck reports no problems. |
-| Claude workflow | **Not yet operational.** Needs setup steps 1–3; then test with a small documentation issue. |
-| Codex review | **Not yet operational.** The Codex connector is installed and replied on #2 as `chatgpt-codex-connector[bot]`, asking for a Codex cloud environment for this repository (setup step 4). No review has run yet. |
-| Ruleset, code-owner approval, auto-merge | **Not yet configured.** Needs steps 6–7 in the GitHub settings. |
+All Factory state lives in GitHub, so nothing depends on a particular Claude or Codex
+session. Most components can stop and restart without losing progress; the exception is an
+interrupted correction run, described below.
+
+| Component | File | Trigger | Writes |
+| --- | --- | --- | --- |
+| Claude: implement | [claude.yml](../.github/workflows/claude.yml) `implement` (no credentials) + `implement-publish`; [run-claude.sh](../.github/scripts/run-claude.sh), [handover.sh](../.github/scripts/handover.sh), [publish-claude.sh](../.github/scripts/publish-claude.sh) | owner labels issue `claude:implement`; Factory queue or retry (`workflow_dispatch`) | `claude/issue-N` branch, PR |
+| Claude: correct | [claude.yml](../.github/workflows/claude.yml) `correct` (cycle check) + `correct-claude` (no credentials) + `correct-publish` | Factory (CI failure, Codex findings, conflict) or owner `@claude` comment | commits on the PR branch |
+| CI | [ci.yml](../.github/workflows/ci.yml), [pr-policy.yml](../.github/workflows/pr-policy.yml) | pull request | check runs |
+| Risk labels | [pr-risk.yml](../.github/workflows/pr-risk.yml) + [classify-pr.sh](../.github/scripts/classify-pr.sh) | `pull_request_target` (runs from `main`) | labels, security notice |
+| Codex review | Codex GitHub integration (reviews every push) | pull request opened or updated | review comments, summary comment |
+| Codex fallback | [codex-fallback.yml](../.github/workflows/codex-fallback.yml) | Factory, 20 min after CI passed with no Codex review | result comment, **Independent review** status |
+| Factory | [factory.yml](../.github/workflows/factory.yml) + [factory.sh](../.github/scripts/factory.sh), [next-task.sh](../.github/scripts/next-task.sh) | CI or fallback finished, Codex comment, schedule (minutes 7, 22, 37, 52) | **Independent review** status, corrections, merges, owner notices, next task |
+
+State that the Factory reads back on every run:
+
+- **Task queue:** open owner issues labeled `claude:implement`, oldest first; `needs-owner`
+  removes an issue from the queue.
+- **Correction cycles:** hidden `maxonkey-claude-cycle sha=…` comments on each PR (two at most).
+- **Review state:** Codex's summary comment and the **Independent review** commit status.
+- **Owner notices:** one hidden `maxonkey-factory-status state=… sha=…` comment per state.
+
+The schedule re-checks every open PR and the queue, so a missed webhook or a runner restart
+is picked up again within about 15 minutes. An interrupted implementation run is picked up
+again too, because its issue stays in the queue until a PR exists. An interrupted correction
+run is not retried: its cycle comment already counts that commit as corrected, so the owner
+gets a "could not finish a correction" notice instead.
+
+## Current status
+
+| Part | Status | Evidence |
+| --- | --- | --- |
+| CI on Windows and Ubuntu, policy checks | Working | Green on #2, #4, #5 |
+| Risk labels and security notice from `main` | Working | #4, #5 |
+| PR metadata (title, attribution, spec line) | Working | Rejected a tool-added attribution footer on #2 |
+| Codex reviews every push | Working | #5: reviews of `f873d4b` and `d78422f`, trigger "New commits" |
+| Factory: Independent review status, blocked and ready notices | Working | #5 |
+| Factory: unverified Codex findings | Working | #5: findings citing nonexistent commits did not start corrections |
+| Claude implement: issue trigger, authentication, retry, failure notice | Working | Issue #3 runs |
+| Claude implement: opening a PR | **Not yet working** | See open issues |
+| Automatic correction, routine merge, next task | Built, simulated, not yet observed live | Needs a Claude PR |
+| Scheduled recovery runs | **Not yet observed** | See open issues |
+
+## Open issues
+
+1. **Claude could not start with secret scrubbing on (issue #3, 06:56 UTC).** The runner had
+   no `bubblewrap`, which `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` requires. `claude.yml` now
+   installs it. A known upstream bug
+   ([claude-code-action#1547](https://github.com/anthropics/claude-code-action/issues/1547))
+   then fails every command with `bwrap: Can't create file at /home/.mcp.json`;
+   `claude.yml` creates that file in advance. Not yet confirmed live. If it still fails, the
+   owner notice lists the failed commands.
+2. **Scheduled Factory runs never fired** after the schedule was added. The schedule moved
+   to minutes 7, 22, 37, and 52; changing the file makes GitHub register it again. Not yet
+   confirmed live.
+3. **Merge commits on `main`.** #4 and #5 were merged with merge commits, which break the
+   one-line commit rule. Disable **Allow merge commits** (setup step 6).
+4. **The `main` ruleset is not configured** (setup step 7). Until it is, branch protection
+   and required checks are not enforced by GitHub.
+5. **Claude no longer holds a GitHub token** (fixed in #6). A separate publish job pushes
+   and opens PRs. Not yet confirmed live: the Claude App token exchange only works for
+   workflow files already on `main`. If the publish job fails, the owner notice says why.
+   The Claude jobs clone the repository without credentials, so they need it to stay public.
+6. **Codex fallback has no `OPENAI_API_KEY` secret.** If Codex skips a commit, the Factory
+   reports that once instead of reviewing it with Codex CLI.
 
 Merges made by the Factory do not start a new CI run on `main`, because GitHub does not
 trigger workflows from its own workflow token. The PR's checks already tested the result.
