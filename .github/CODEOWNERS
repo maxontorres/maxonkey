@@ -1,10 +1,43 @@
-# Owner approval is required for every path by default (enforced when the
-# main-branch ruleset enables "Require review from Code Owners").
-* @maxontorres
-
-# Low-risk documentation: lines without an owner remove the requirement, and
-# .github/scripts/classify-pr.sh treats exactly these paths as eligible for automatic merge.
-# Use exact paths starting with "/" here.
-/README.md
-/docs/product.md
-/docs/ui-design.md
+# Security-sensitive paths need the owner's approval (enforced when the main-branch
+# ruleset enables "Require review from Code Owners"). Every other path is routine and
+# is merged by the Factory once CI and the Codex review pass.
+# Keep this list in sync with the case patterns in .github/scripts/classify-pr.sh.
+/src/crypto.rs @maxontorres
+/src/secret.rs @maxontorres
+/src/vault.rs @maxontorres
+/src/store.rs @maxontorres
+/src/paths.rs @maxontorres
+/src/prompt.rs @maxontorres
+/src/commands.rs @maxontorres
+/src/main.rs @maxontorres
+/src/cli.rs @maxontorres
+/tests/cli.rs @maxontorres
+/tests/vault_pty.py @maxontorres
+/tests/commit_msg.sh @maxontorres
+/tests/spec_check.py @maxontorres
+/Cargo.toml @maxontorres
+/Cargo.lock @maxontorres
+/deny.toml @maxontorres
+/rust-toolchain.toml @maxontorres
+/build.rs @maxontorres
+/.cargo/ @maxontorres
+/.github/ @maxontorres
+/.githooks/ @maxontorres
+/.claude/ @maxontorres
+/.mcp.json @maxontorres
+/.agents/ @maxontorres
+/.specify/memory/ @maxontorres
+/.gitleaks* @maxontorres
+/AGENTS.md @maxontorres
+/CLAUDE.md @maxontorres
+/docs/security.md @maxontorres
+/docs/adr/ @maxontorres
+/specs/*/spec.md @maxontorres
+*mcp* @maxontorres
+*auth* @maxontorres
+*recover* @maxontorres
+*broker* @maxontorres
+*permission* @maxontorres
+*secret* @maxontorres
+*crypt* @maxontorres
+*key* @maxontorres

@@ -677,7 +677,7 @@ Do not reinitialize Spec Kit over existing files just to run the application.
 
 The owner starts agent work from GitHub: an issue labeled `claude:implement` asks Claude
 Code to implement it and open a pull request, CI and Codex review the result, and the
-owner approves anything beyond low-risk documentation. Setup steps, the merge policy,
+owner approves security-sensitive changes; routine changes merge automatically. Setup steps, the merge policy,
 and how to read results are in [development automation](docs/automation.md).
 
 ## Building from source

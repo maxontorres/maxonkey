@@ -7,7 +7,8 @@ set -euo pipefail
 
 REQUIRED_CHECKS=("Verify (ubuntu-latest)" "Verify (windows-latest)" "Repository policy" "PR metadata")
 STATUS_MARKER="<!-- maxonkey-factory-status"
-CODEX_MARKER="<!-- maxonkey-codex-request"
+FALLBACK_MARKER="<!-- maxonkey-codex-fallback sha="
+FALLBACK_AFTER=1200   # seconds after CI passes before Codex CLI reviews instead
 
 pr=$(gh api "repos/$REPO/pulls/$NUMBER")
 field() { jq -r "$1" <<< "$pr"; }
@@ -69,16 +70,58 @@ if [ "$CODEX_REVIEW" != off ]; then
     codex=findings
   fi
 fi
+
+# Codex CLI fallback result for this commit (posted by codex-fallback.yml).
+fallback=""
+if [ "$codex" = missing ]; then
+  fallback=$(jq -r --arg m "$FALLBACK_MARKER$head" \
+    '[.[] | select(.user.login == "github-actions[bot]" and (.body | startswith($m))) | .body | split("\n")[0]] | last // ""' <<< "$comments")
+  case "$fallback" in
+    *"state=done findings=0 "*) codex=passed ;;
+    *"state=done findings="*) codex=findings ;;
+  esac
+fi
+
+if [ "$codex" = findings ]; then
+  # Owner override, bound to this exact commit: "/accept-codex <first 7 of the sha> <reason>".
+  # Only the owner account counts; a new commit needs a new decision.
+  if jq -e --arg o "$OWNER" --arg p "/accept-codex ${head:0:7}" \
+      'any(.[]; .user.login == $o and .author_association == "OWNER" and (.body | startswith($p)))' <<< "$comments" >/dev/null; then
+    codex=accepted
+  else
+    # A finding that cites a commit missing from this repository is unverified: it never
+    # starts an automatic correction. Findings without commit references count as verified.
+    findings=$(gh api --paginate "repos/$REPO/pulls/$NUMBER/comments" | jq -s --arg c "$CODEX_LOGIN" --arg h "$head" \
+      '[add // [] | .[] | select(.user.login == $c and .original_commit_id == $h) | .body]')
+    finding_count=$(jq length <<< "$findings")
+    verified=false
+    for ((k = 0; k < finding_count; k++)); do
+      ok=true
+      for ref in $(jq -r --argjson k "$k" '.[$k]' <<< "$findings" | grep -oE '`[0-9a-f]{7,40}`' | tr -d '`' | sort -u); do
+        gh api "repos/$REPO/commits/$ref" --jq .sha >/dev/null 2>&1 || ok=false
+      done
+      if [ "$ok" = true ]; then verified=true; fi
+    done
+    if [ "$finding_count" -gt 0 ] && [ "$verified" = false ]; then codex=unverified; fi
+  fi
+fi
 echo "pr=#$NUMBER head=$head author=$author ci=$ci codex=$codex"
 
 # Required check for manual merges: the head commit must have a clean independent review.
 case "$codex" in
+  accepted) rstate=success; rdesc="Owner accepted the Codex findings on this commit" ;;
+  unverified) rstate=failure; rdesc="Codex finding cites a commit not in this repository; owner decision needed" ;;
   passed) rstate=success; rdesc=$([ "$CODEX_REVIEW" = off ] && echo "Codex review disabled" || echo "Codex reviewed this commit with no open findings") ;;
   findings) rstate=failure; rdesc="Codex reported findings on this commit" ;;
   *) rstate=pending; rdesc="Waiting for a Codex review of this commit" ;;
 esac
 gh api "repos/$REPO/statuses/$head" -f state="$rstate" -f context="Independent review" -f description="$rdesc" >/dev/null
 
+if [ "$codex" = unverified ] && [ "$ci" != failed ]; then
+  notify unverified "Codex reported findings on \`${head:0:7}\` that cite a commit not in this repository, so no automatic correction ran. If they are false positives, comment \`/accept-codex ${head:0:7} <reason>\`; otherwise fix them or comment \`@claude\`."
+  exit 0
+fi
+[ "$codex" = accepted ] && codex=passed
 if [ "$ci" = failed ] || [ "$codex" = findings ]; then
   reason=$([ "$ci" = failed ] && echo ci || echo codex)
   if [ "$claude_pr" = true ]; then
@@ -93,11 +136,22 @@ fi
 [ "$ci" = passed ] || { echo "waiting for CI"; exit 0; }
 
 if [ "$codex" = missing ]; then
-  # A new commit does not start a Codex review by itself; request one once per commit.
-  if ! jq -e --arg t "$CODEX_MARKER sha=$head -->" 'any(.[]; .user.login == "github-actions[bot]" and (.body | contains($t)))' <<< "$comments" >/dev/null; then
-    gh api "repos/$REPO/issues/$NUMBER/comments" -f body="@codex review
-$CODEX_MARKER sha=$head -->" >/dev/null
-    echo "requested Codex review"
+  # Codex reviews each push on its own. If it has not reviewed this commit some time after
+  # CI passed, Codex CLI reviews it through GitHub Actions instead (once per commit).
+  ci_done=$(jq -r 'map(.completed_at // empty) | max // empty' <<< "$runs")
+  waited=$(( $(date -u +%s) - $(date -u -d "${ci_done:-now}" +%s) ))
+  case "$fallback" in
+    *"state=unavailable"*|*"state=error"*)
+      notify codex-unavailable "Codex has not reviewed \`${head:0:7}\` and the Codex CLI fallback could not run (${fallback#*state=}). Check the Codex integration or the \`OPENAI_API_KEY\` secret."
+      exit 0 ;;
+  esac
+  started=$(gh api "repos/$REPO/actions/workflows/codex-fallback.yml/runs?per_page=50" \
+    --jq "[.workflow_runs[] | select(.display_title == \"Codex fallback for #$NUMBER at $head\")] | length")
+  if [ "$waited" -gt "$FALLBACK_AFTER" ] && [ "$started" = 0 ]; then
+    gh workflow run codex-fallback.yml --repo "$REPO" -f pr="$NUMBER" -f sha="$head"
+    echo "started Codex CLI fallback review"
+  else
+    echo "waiting for Codex (${waited}s since CI passed)"
   fi
   exit 0
 fi
@@ -109,9 +163,17 @@ if grep -q '^sensitive=' <<< "$result"; then eligible=false; fi
 if [ "$eligible" = true ] && { [ "$author" = "$OWNER" ] || [ "$author" = "claude[bot]" ]; }; then
   if gh pr merge "$NUMBER" --repo "$REPO" --rebase --match-head-commit "$head"; then
     echo "merged"
+    bash "$(dirname "$0")/next-task.sh" || true
   else
-    notify merge-failed "all checks passed but the automatic merge failed; see the pull request for conflicts."
+    state=$(gh api "repos/$REPO/pulls/$NUMBER" --jq .mergeable_state)
+    if [ "$claude_pr" = true ] && { [ "$state" = dirty ] || [ "$state" = behind ]; }; then
+      # Recoverable: main moved on. Claude merges main into its branch; its push re-runs CI.
+      gh workflow run claude.yml --repo "$REPO" -f pr="$NUMBER" -f reason=conflict
+      echo "dispatched correction: conflict ($state)"
+    else
+      notify merge-failed "all checks passed but the automatic merge failed (GitHub merge state: ${state:-unknown}). This is not a conflict automation can fix."
+    fi
   fi
   exit 0
 fi
-notify ready "CI and the Codex review passed on \`${head:0:7}\`. This change is not low-risk, so it needs your approval and merge."
+notify ready "CI and the Codex review passed on \`${head:0:7}\`. This change is security-sensitive, so it needs your approval and merge."

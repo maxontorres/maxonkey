@@ -5,23 +5,30 @@ name: Factory
 # with write access. The pull request head is never checked out.
 on:
   workflow_run:
-    workflows: [Rust CI, PR policy]
+    workflows: [Rust CI, PR policy, Codex fallback review]
     types: [completed]
   issue_comment:
     types: [created, edited]
+  # Fallback: start the next queued task and catch events GitHub did not deliver.
+  schedule:
+    - cron: "*/15 * * * *"
 
 permissions: {}
 
 concurrency:
-  group: factory-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number }}
+  group: factory-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || 'queue' }}
   cancel-in-progress: false
 
 jobs:
   orchestrate:
     if: >-
-      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request') ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'pull_request' ||
+       github.event.workflow_run.name == 'Codex fallback review')) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-       github.event.comment.user.login == (vars.CODEX_REVIEWER_LOGIN || 'chatgpt-codex-connector[bot]'))
+       (github.event.comment.user.login == (vars.CODEX_REVIEWER_LOGIN || 'chatgpt-codex-connector[bot]') ||
+        (github.event.comment.user.login == github.repository_owner &&
+         startsWith(github.event.comment.body, '/accept-codex '))))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -41,11 +48,22 @@ jobs:
           REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_NAME: ${{ github.event.workflow_run.name }}
+          RUN_TITLE: ${{ github.event.workflow_run.display_title }}
           NUMBER: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number }}
           CODEX_LOGIN: ${{ vars.CODEX_REVIEWER_LOGIN || 'chatgpt-codex-connector[bot]' }}
           CODEX_REVIEW: ${{ vars.CODEX_REVIEW || 'required' }}
         run: |
-          if [ -z "$NUMBER" ] && [ -n "$HEAD_SHA" ]; then
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            # Re-check open pull requests (catches missed events and silent reviews), then the queue.
+            for n in $(gh api "repos/$REPO/pulls?state=open&base=main&per_page=50" --jq '.[].number'); do
+              NUMBER=$n bash .github/scripts/factory.sh || echo "::warning::Factory check failed for #$n"
+            done
+            bash .github/scripts/next-task.sh; exit 0
+          fi
+          if [ "$RUN_NAME" = "Codex fallback review" ]; then
+            NUMBER=$(sed -n 's/^Codex fallback for #\([0-9]*\) at .*/\1/p' <<< "$RUN_TITLE")
+          elif [ -z "$NUMBER" ] && [ -n "$HEAD_SHA" ]; then
             NUMBER=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" --jq '.[0].number // empty')
           fi
           [ -n "$NUMBER" ] || { echo "No pull request for this event"; exit 0; }

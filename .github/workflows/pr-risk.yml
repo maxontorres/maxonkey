@@ -49,7 +49,7 @@ jobs:
           gh label create security-sensitive --color B60205 --force \
             --description "Owner approval and independent review required" >/dev/null
           gh label create low-risk --color 0E8A16 --force \
-            --description "Merged automatically after all checks and Codex pass" >/dev/null
+            --description "Routine change; merged automatically after CI and Codex pass" >/dev/null
           set_label() {
             if [ "$2" = true ]; then
               gh api "repos/$REPO/issues/$NUMBER/labels" -f "labels[]=$1" >/dev/null
