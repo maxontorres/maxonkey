@@ -227,7 +227,7 @@ jobs:
         env:
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REPORT: ${{ needs.implement.outputs.report }}
-          REASON: ${{ steps.publish.outputs.reason || (needs.implement.outputs.toobig == 'true' && 'the change is too large to hand over (over about 300 KB)') || '' }}
+          REASON: ${{ steps.publish.outputs.reason || (needs.implement.outputs.toobig == 'true' && 'the change is too large to hand over (over about 90 KB of compressed commits)') || '' }}
         run: |
           if [ "$ATTEMPT" -lt 2 ]; then
             gh workflow run claude.yml --repo "$GITHUB_REPOSITORY" -f issue="$ISSUE" -f attempt=2
@@ -470,7 +470,7 @@ jobs:
         env:
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REPORT: ${{ needs.correct-claude.outputs.report }}
-          REASON: ${{ steps.publish.outputs.reason || (needs.correct-claude.outputs.toobig == 'true' && 'the change is too large to hand over (over about 300 KB)') || '' }}
+          REASON: ${{ steps.publish.outputs.reason || (needs.correct-claude.outputs.toobig == 'true' && 'the change is too large to hand over (over about 90 KB of compressed commits)') || '' }}
         run: |
           report=$(printf '%s' "$REPORT" | base64 -d 2>/dev/null || true)
           gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body \

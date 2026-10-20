@@ -31,11 +31,12 @@ if [ -z "$failed" ] && [ -n "$(git status --porcelain)" ]; then
   failed="Claude left uncommitted changes, so nothing was published."
 fi
 
-# GitHub limits a job's outputs to 1 MB in total, counted as UTF-16 (2 bytes per character),
-# so the bundle gets 400,000 characters and the other outputs stay under about 60,000.
+# The publish job receives the bundle in one environment variable, and Linux limits a single
+# variable to 128 KiB, so the encoded bundle gets at most 120,000 characters (about 90 KB of
+# compressed commits). All outputs together stay well under GitHub's 1 MB job output limit.
 if git bundle create "$RUNNER_TEMP/work.bundle" "$BASE..HEAD" 2>/dev/null; then
   bundle=$(base64 -w0 < "$RUNNER_TEMP/work.bundle")
-  if [ "${#bundle}" -gt 400000 ]; then out toobig true; else out bundle "$bundle"; fi
+  if [ "${#bundle}" -gt 120000 ]; then out toobig true; else out bundle "$bundle"; fi
 fi
 for name in pr-title.txt:title:500 pr-body.md:body:20000 comment.md:comment:20000; do
   IFS=: read -r file key limit <<< "$name"
