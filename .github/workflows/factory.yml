@@ -1,0 +1,52 @@
+name: Factory
+
+# Orchestrates pull requests after CI or a Codex review finishes. These events always
+# run this file from the default branch, so pull requests cannot change what runs here
+# with write access. The pull request head is never checked out.
+on:
+  workflow_run:
+    workflows: [Rust CI, PR policy]
+    types: [completed]
+  issue_comment:
+    types: [created, edited]
+
+permissions: {}
+
+concurrency:
+  group: factory-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  orchestrate:
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       github.event.comment.user.login == (vars.CODEX_REVIEWER_LOGIN || 'chatgpt-codex-connector[bot]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+      checks: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Next step for the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          NUMBER: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number }}
+          CODEX_LOGIN: ${{ vars.CODEX_REVIEWER_LOGIN || 'chatgpt-codex-connector[bot]' }}
+          CODEX_REVIEW: ${{ vars.CODEX_REVIEW || 'required' }}
+        run: |
+          if [ -z "$NUMBER" ] && [ -n "$HEAD_SHA" ]; then
+            NUMBER=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" --jq '.[0].number // empty')
+          fi
+          [ -n "$NUMBER" ] || { echo "No pull request for this event"; exit 0; }
+          NUMBER=$NUMBER bash .github/scripts/factory.sh

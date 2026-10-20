@@ -3,7 +3,7 @@
 * @maxontorres
 
 # Low-risk documentation: lines without an owner remove the requirement, and
-# .github/workflows/pr-risk.yml treats exactly these paths as auto-merge eligible.
+# .github/scripts/classify-pr.sh treats exactly these paths as eligible for automatic merge.
 # Use exact paths starting with "/" here.
 /README.md
 /docs/product.md
