@@ -29,7 +29,7 @@ The shared rules for every agent are in [AGENTS.md](../AGENTS.md).
    complete and Markdown links and heading anchors resolve.
 4. **PR policy runs.** The [PR policy workflow](../.github/workflows/pr-policy.yml)
    checks the PR title and description. The [PR risk workflow](../.github/workflows/pr-risk.yml)
-   labels the PR `low-risk` or `security-sensitive` and mentions the owner on
+   labels the PR `low-risk` (routine) or `security-sensitive` and mentions the owner on
    security-sensitive PRs.
 5. **Codex reviews independently.** Codex reviews a new PR on its own. Codex reads the
    `Code Review Rules` in AGENTS.md and posts a normal GitHub review.
@@ -40,12 +40,18 @@ The shared rules for every agent are in [AGENTS.md](../AGENTS.md).
    - starts a Claude correction when CI fails or Codex reports findings on a Claude PR;
    - sets the **Independent review** status: pending until Codex reviewed the current
      commit, failed on findings, passed when clean;
-   - merges a low-risk PR when every required check and the Codex review pass;
+   - merges a routine PR when every required check and the Codex review pass, then
+     starts the next approved issue;
+   - asks Claude to merge `main` into its branch when a merge fails because `main` moved on;
    - otherwise posts one comment that mentions you, when a PR is ready for your approval
      or is blocked.
 7. **Corrections are limited.** Each PR gets at most two Claude correction cycles, and
    each commit is corrected at most once. After that the PR is labeled `needs-owner`
    and you get one comment.
+8. **Tasks run one at a time.** Label as many issues `claude:implement` as you like.
+   The oldest one starts when no other Claude PR is in progress; the rest wait in the
+   queue. A Claude run that fails is retried once; after a second failure the issue is
+   labeled `needs-owner`, you get one comment, and the queue moves on.
 
 The PR risk, Factory, and Claude dispatch workflows always run their copy on `main`,
 so a pull request cannot change the commands that hold write access.
@@ -76,8 +82,8 @@ recovery, or MCP behavior unless the specification and ADR already approve that 
 
 - **On the PR page:** the **Checks** section at the bottom lists every check with a
   green tick or red cross. Select **Details** to open the full log in the Actions tab.
-- **Labels:** `low-risk` (merged automatically), `security-sensitive` (needs your
-  approval), and `needs-owner` (automation stopped).
+- **Labels:** `low-risk` (routine, merged automatically), `security-sensitive` (needs your
+  approval), and `needs-owner` (automation stopped for that issue or PR).
 - **Independent review** status on each commit shows whether Codex reviewed it.
 - **Security-sensitive PRs** get a comment that mentions you and lists the sensitive files.
 - **Codex** posts its findings as a PR review in the **Conversation** tab. A 👀 reaction
@@ -121,14 +127,31 @@ not skip CI, and security-sensitive PRs still need your merge.
 
 | Change | Merge |
 | --- | --- |
-| Only `README.md`, `docs/product.md`, or `docs/ui-design.md` (the unowned lines in [CODEOWNERS](../.github/CODEOWNERS)), opened by you or the Claude GitHub App | Merged by the Factory after all required checks and the Codex review pass |
-| Anything else | Requires your approval through the code-owner rule |
-| Cryptography, secrets, authentication, recovery, MCP, permissions, dependencies, workflows, agent rules, security docs, specifications | Labeled `security-sensitive`; never merged automatically; needs your approval and a passing **Independent review** status |
+| Routine: touches no path listed in [CODEOWNERS](../.github/CODEOWNERS), opened by you or the Claude GitHub App | Merged by the Factory after all required checks and the Codex review pass |
+| Security-sensitive: cryptography, secrets, authentication, recovery, CLI credential handling, MCP, permissions, dependencies, workflows, agent rules and settings, policy test scripts, security docs, specifications (the paths in CODEOWNERS) | Labeled `security-sensitive`; never merged automatically; needs your approval and a passing **Independent review** status |
 
 The Factory merges with **rebase** so the validated one-line commits land on `main`
 unchanged, and only if the PR head is still the commit it checked.
-The low-risk list is read from `main`, so a PR cannot make itself eligible. To change
-the list, edit the unowned lines in CODEOWNERS (that edit itself needs your approval).
+The classification runs from `main`, so a PR cannot make itself routine. The sensitive
+list lives in CODEOWNERS and `.github/scripts/classify-pr.sh`; changing either is itself
+security-sensitive.
+
+## Agent permissions
+
+- **Claude in GitHub Actions** may run any development command: Git (branch, commit,
+  push to its own `claude/` branch, open PRs), file creation, editing, and deletion,
+  Cargo including dependency installs, builds, and tests. A short deny list blocks force
+  pushes, pushes to `main`, `git config`, merging, approving, `gh api`, secrets, and
+  printing the environment. Secrets are removed from every command Claude runs, and those
+  commands run isolated on the runner.
+- **Real limits** do not depend on the agent following instructions: the Claude GitHub App
+  token cannot change workflow files and is not an administrator, the `main` ruleset
+  blocks direct pushes and requires the checks, and only the Factory (from `main`) merges.
+- **Interactive Claude Code sessions** use `.claude/settings.json`: routine development
+  commands run without confirmation prompts; force pushes, `git config`, merges, approvals,
+  secrets, and `.env` files stay blocked.
+- **Codex** reviews through its GitHub connector. Its own permissions and environment
+  are set in Codex settings on the ChatGPT website.
 
 GitHub does not let anyone approve their own PR. PRs that Claude opens through the
 workflow are authored by the Claude GitHub App, so you can approve them normally. For a
@@ -191,7 +214,10 @@ In **Settings → General → Pull Requests**: keep **Allow rebase merging** on.
 **Allow merge commits**, because "Merge pull request #N" messages break the commit
 convention. GitHub's **Allow auto-merge** is not needed; the Factory merges itself.
 
-### 7. Protect `main` with a ruleset
+### 7. Protect `main` with a ruleset (required)
+
+Claude can run any Git command on the runner, so this ruleset is what technically stops
+an agent from pushing to `main` or merging without the checks.
 
 Go to **Settings → Rules → Rulesets → New ruleset → New branch ruleset**:
 

@@ -80,7 +80,8 @@ The GitHub workflow is described in [docs/automation.md](docs/automation.md).
   working through the owner's account; CI checks and owner merge of sensitive changes still apply.
 - Agents never merge, approve, enable auto-merge, change labels, edit `.github/`,
   bypass hooks, or change repository settings. Only `.github/workflows/factory.yml`
-  merges, and only pull requests limited to the low-risk paths in `.github/CODEOWNERS`.
+  merges, and only routine pull requests: those that touch no security-sensitive path
+  listed in `.github/CODEOWNERS`.
 - Pull requests use `.github/pull_request_template.md`, a `Type: Description` title,
   and a `Spec: specs/NNN-name` line when code or tests change.
 - Merge commits follow Rule 1 too, for example
