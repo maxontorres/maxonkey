@@ -25,11 +25,13 @@ The shared rules for every agent are in [AGENTS.md](../AGENTS.md).
 3. **CI runs.** The [Rust CI workflow](../.github/workflows/ci.yml) runs formatting,
    Clippy, tests, and release builds on Windows and Linux, the Linux terminal tests,
    dependency vulnerability and license checks, the commit-message check, a secret scan
-   of the full Git history, and a specification and link check.
+   of the full Git history with trusted scanner settings, and a check that specifications are
+   complete and Markdown links and heading anchors resolve.
 4. **PR policy runs.** The [PR policy workflow](../.github/workflows/pr-policy.yml)
-   checks the PR title and description, labels the PR `low-risk` or `security-sensitive`,
-   mentions the owner on security-sensitive PRs, and turns on auto-merge only for
-   low-risk PRs.
+   checks the PR title and description. The [PR risk workflow](../.github/workflows/pr-risk.yml)
+   labels the PR `low-risk` or `security-sensitive`, mentions the owner on
+   security-sensitive PRs, and turns on auto-merge only for low-risk PRs. PR risk always
+   runs the copy on `main`, so a PR cannot change the commands that hold write access.
 5. **Codex reviews independently**, once the owner connects it (see
    [setup](#4-connect-codex-code-review)). Codex reads the `Code Review Rules` in
    AGENTS.md and posts a normal GitHub review.
@@ -202,7 +204,7 @@ Go to **Settings → Rules → Rulesets → New ruleset → New branch ruleset**
 | --- | --- |
 | Rust CI on Windows and Ubuntu | Passed on GitHub runners for the PR that added this automation (#2). |
 | CI policy job (commit messages, gitleaks 8.30.1 secret scan, spec and link check) | Passed on a GitHub runner (#2); also run locally against the full history. |
-| PR policy: risk classification | Observed on #2: labeled it `security-sensitive`, posted the owner escalation comment, and left auto-merge off. Other cases (docs-only, mixed, cryptography, MCP, non-owner) exercised locally with a simulated GitHub CLI. |
+| PR risk classification | Observed on #2 while it ran as part of PR policy: labeled it `security-sensitive`, posted the owner escalation comment, and left auto-merge off. It now runs from `main` through `pull_request_target`, so it first runs in that form on the next PR after #2 merges. Other cases (docs-only, mixed, cryptography, CLI, MCP, non-owner, stale notice) exercised locally with a simulated GitHub CLI. |
 | PR policy: metadata | Observed on #2: failed on an AI attribution footer added by the tool that created the PR, as intended. Title and spec rules exercised locally. |
 | Workflow syntax | `actionlint` 1.7.12 with ShellCheck reports no problems. |
 | Claude workflow | **Not yet operational.** Needs setup steps 1–3; then test with a small documentation issue. |

@@ -73,10 +73,12 @@ The GitHub workflow is described in [docs/automation.md](docs/automation.md).
 - At most two Claude correction cycles run per pull request; then the owner decides.
 - Serious security findings are escalated to the owner, not fixed autonomously.
 - Agents never merge, approve, enable auto-merge, change labels, edit `.github/`,
-  bypass hooks, or change repository settings. Only `.github/workflows/pr-policy.yml`
+  bypass hooks, or change repository settings. Only `.github/workflows/pr-risk.yml`
   enables auto-merge, and only for the low-risk paths listed in `.github/CODEOWNERS`.
 - Pull requests use `.github/pull_request_template.md`, a `Type: Description` title,
   and a `Spec: specs/NNN-name` line when code or tests change.
+- Merge commits follow Rule 1 too, for example
+  `git merge -m "Chore: Merge main into feature branch" main`; CI checks every PR commit.
 
 ## Code Review Rules
 
