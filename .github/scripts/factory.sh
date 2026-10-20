@@ -7,7 +7,8 @@ set -euo pipefail
 
 REQUIRED_CHECKS=("Verify (ubuntu-latest)" "Verify (windows-latest)" "Repository policy" "PR metadata")
 STATUS_MARKER="<!-- maxonkey-factory-status"
-CODEX_MARKER="<!-- maxonkey-codex-request"
+FALLBACK_MARKER="<!-- maxonkey-codex-fallback sha="
+FALLBACK_AFTER=1200   # seconds after CI passes before Codex CLI reviews instead
 
 pr=$(gh api "repos/$REPO/pulls/$NUMBER")
 field() { jq -r "$1" <<< "$pr"; }
@@ -70,6 +71,17 @@ if [ "$CODEX_REVIEW" != off ]; then
   fi
 fi
 
+# Codex CLI fallback result for this commit (posted by codex-fallback.yml).
+fallback=""
+if [ "$codex" = missing ]; then
+  fallback=$(jq -r --arg m "$FALLBACK_MARKER$head" \
+    '[.[] | select(.user.login == "github-actions[bot]" and (.body | startswith($m))) | .body | split("\n")[0]] | last // ""' <<< "$comments")
+  case "$fallback" in
+    *"state=done findings=0 "*) codex=passed ;;
+    *"state=done findings="*) codex=findings ;;
+  esac
+fi
+
 if [ "$codex" = findings ]; then
   # Owner override, bound to this exact commit: "/accept-codex <first 7 of the sha> <reason>".
   # Only the owner account counts; a new commit needs a new decision.
@@ -124,18 +136,22 @@ fi
 [ "$ci" = passed ] || { echo "waiting for CI"; exit 0; }
 
 if [ "$codex" = missing ]; then
-  # A new commit does not start a Codex review by itself; request one once per commit.
-  requested=$(jq -r --arg t "$CODEX_MARKER sha=$head -->" \
-    '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains($t))) | .created_at] | first // empty' <<< "$comments")
-  if [ -n "$requested" ] && [ $(( $(date -u +%s) - $(date -u -d "$requested" +%s) )) -gt 1800 ]; then
-    # Codex may ignore requests from the workflow bot; say so once instead of waiting forever.
-    notify codex-silent "Codex has not reviewed \`${head:0:7}\` 30 minutes after it was requested. Comment \`@codex review\` yourself, or set Codex to review every push."
-    exit 0
-  fi
-  if [ -z "$requested" ]; then
-    gh api "repos/$REPO/issues/$NUMBER/comments" -f body="@codex review
-$CODEX_MARKER sha=$head -->" >/dev/null
-    echo "requested Codex review"
+  # Codex reviews each push on its own. If it has not reviewed this commit some time after
+  # CI passed, Codex CLI reviews it through GitHub Actions instead (once per commit).
+  ci_done=$(jq -r 'map(.completed_at // empty) | max // empty' <<< "$runs")
+  waited=$(( $(date -u +%s) - $(date -u -d "${ci_done:-now}" +%s) ))
+  case "$fallback" in
+    *"state=unavailable"*|*"state=error"*)
+      notify codex-unavailable "Codex has not reviewed \`${head:0:7}\` and the Codex CLI fallback could not run (${fallback#*state=}). Check the Codex integration or the \`OPENAI_API_KEY\` secret."
+      exit 0 ;;
+  esac
+  started=$(gh api "repos/$REPO/actions/workflows/codex-fallback.yml/runs?per_page=50" \
+    --jq "[.workflow_runs[] | select(.display_title == \"Codex fallback for #$NUMBER at $head\")] | length")
+  if [ "$waited" -gt "$FALLBACK_AFTER" ] && [ "$started" = 0 ]; then
+    gh workflow run codex-fallback.yml --repo "$REPO" -f pr="$NUMBER" -f sha="$head"
+    echo "started Codex CLI fallback review"
+  else
+    echo "waiting for Codex (${waited}s since CI passed)"
   fi
   exit 0
 fi

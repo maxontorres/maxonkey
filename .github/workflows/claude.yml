@@ -277,9 +277,9 @@ jobs:
         run: |
           git config core.hooksPath .githooks
           dir="$RUNNER_TEMP/claude-input"; mkdir -p "$dir"
-          filter="select(.user.login == \"$OWNER\" or .user.login == \"$CODEX_LOGIN\")"
+          filter="select(.user.login == \"$OWNER\" or .user.login == \"$CODEX_LOGIN\" or (.user.login == \"github-actions[bot]\" and (.body | startswith(\"<!-- maxonkey-codex-fallback\"))))"
           {
-            echo "# Findings for pull request #$NUMBER (owner and Codex only)"
+            echo "# Findings for pull request #$NUMBER (owner, Codex, and the Codex CLI fallback only)"
             echo; echo "## Reviews"
             gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$NUMBER/reviews" \
               --jq ".[] | $filter | select(.body != \"\") | \"### \(.user.login) (\(.state))\n\(.body)\n\""

@@ -35,8 +35,9 @@ The shared rules for every agent are in [AGENTS.md](../AGENTS.md).
    `Code Review Rules` in AGENTS.md and posts a normal GitHub review.
 6. **The Factory decides the next step.** The [Factory workflow](../.github/workflows/factory.yml)
    runs whenever CI or a Codex review finishes. For each PR it:
-   - asks Codex to review a new commit (`@codex review`) once CI is green, because new
-     commits do not start a Codex review by themselves;
+   - waits for Codex, which reviews every push; if Codex has not reviewed a commit 20
+     minutes after CI passed, Codex CLI reviews it through the
+     [Codex fallback workflow](../.github/workflows/codex-fallback.yml) instead;
    - starts a Claude correction when CI fails or Codex reports findings on a Claude PR;
    - sets the **Independent review** status: pending until Codex reviewed the current
      commit, failed on findings, passed when clean;
@@ -200,8 +201,10 @@ Paste the value only into the GitHub secret form. Never put it in a file, issue,
    Actions → Variables**, so Claude receives Codex findings.
 
 Codex code review requires a ChatGPT plan that includes Codex; check current plan details
-on the OpenAI site. The Factory requests a Codex review for each new commit after CI
-passes. **Manual trigger:** comment `@codex review` on any PR.
+on the OpenAI site. Set Codex to review every push. **Fallback:** add a repository secret
+`OPENAI_API_KEY` (an OpenAI API key) so Codex CLI can review a commit in GitHub Actions
+when the Codex integration does not. The fallback reads only the PR head, runs without sudo
+or write access, and never receives a GitHub token.
 
 ### 5. Create the trigger label
 
@@ -267,9 +270,8 @@ trigger workflows from its own workflow token. The PR's checks already tested th
   `Type: Short description`. Rewrite the commit on its branch before merging.
 - **`PR metadata` fails:** fix the PR title, remove AI attribution from the description,
   or add a `Spec: specs/NNN-name` line for code changes.
-- **Codex did not review a new commit:** Codex reviews when a PR opens or a draft is
-  marked ready, and when a person comments `@codex review`; it ignores that comment from the
-  workflow bot. After 30 minutes the Factory tells you once. Set Codex to review every push
-  in Codex settings, or comment `@codex review` yourself.
+- **Codex did not review a new commit:** the Factory runs the Codex CLI fallback review
+  after 20 minutes. You are told only if the fallback cannot run (no `OPENAI_API_KEY`
+  secret, or it produced no result).
 - **A low-risk PR did not merge:** open the latest **Factory** run. It prints the CI and
   Codex state it saw, for example `ci=passed codex=pending`.
