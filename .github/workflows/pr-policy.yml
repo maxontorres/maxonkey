@@ -21,19 +21,24 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
       - name: Title, attribution, and specification reference
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           TITLE: ${{ github.event.pull_request.title }}
           BODY: ${{ github.event.pull_request.body }}
         run: |
           status=0
           # Rebase merges keep the validated commits; the title must still follow the convention.
+          # Use the base branch's validator so a pull request cannot weaken its own check.
+          git show "$BASE_SHA:.githooks/commit-msg" > "$RUNNER_TEMP/commit-msg"
           printf '%s\n' "$TITLE" > "$RUNNER_TEMP/title"
-          if ! sh .githooks/commit-msg "$RUNNER_TEMP/title"; then
+          if ! sh "$RUNNER_TEMP/commit-msg" "$RUNNER_TEMP/title"; then
             echo "::error::PR title must be 'Type: Short description'"
             status=1
           fi
@@ -42,7 +47,8 @@ jobs:
             echo "::error::Remove AI self-attribution from the PR title or description (AGENTS.md Rule 2)"
             status=1
           fi
-          files=$(gh api --paginate "repos/$REPO/pulls/$NUMBER/files" --jq '.[].filename')
+          files=$(gh api --paginate "repos/$REPO/pulls/$NUMBER/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)')
           if printf '%s\n' "$files" | grep -Eq '^(src|tests)/'; then
             spec=$(printf '%s\n' "$BODY" | grep -Eo 'Spec: specs/[0-9]{3}-[a-z0-9-]+' | head -1 | cut -c7-)
             if [ -z "$spec" ] || [ ! -f "$spec/spec.md" ]; then
@@ -89,7 +95,7 @@ jobs:
             printf '%s\n' "$lowrisk" | grep -Fxq -- "$f" || eligible=false
             case "$f" in
               src/crypto.rs|src/secret.rs|src/vault.rs|src/store.rs|src/paths.rs|src/prompt.rs|\
-              src/commands.rs|src/main.rs|Cargo.toml|Cargo.lock|deny.toml|rust-toolchain.toml|\
+              src/commands.rs|src/main.rs|src/cli.rs|tests/cli.rs|Cargo.toml|Cargo.lock|deny.toml|rust-toolchain.toml|\
               .github/*|.githooks/*|.claude/*|.mcp.json|.agents/*|.specify/memory/*|\
               AGENTS.md|CLAUDE.md|docs/security.md|docs/adr/*|specs/*/spec.md|tests/vault_pty.py|\
               *mcp*|*auth*|*recover*|*broker*|*permission*|*secret*|*crypt*|*key*)
@@ -112,21 +118,24 @@ jobs:
           set_label security-sensitive "$([ -n "$sensitive" ] && echo true || echo false)"
           set_label low-risk "$eligible"
 
+          marker='<!-- maxonkey-security-escalation -->'
+          id=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -1)
           if [ -n "$sensitive" ]; then
-            marker='<!-- maxonkey-security-escalation -->'
             body="$marker
           @$OWNER this pull request changes security-sensitive paths:
 
           $sensitive
           Before merging: an independent Codex review of the current commit (comment \`@codex review\`
           if none appeared), owner approval, and green CI. Auto-merge is disabled for this pull request."
-            id=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate \
-              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -1)
             if [ -n "$id" ]; then
               gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" >/dev/null
             else
               gh pr comment "$NUMBER" --body "$body"
             fi
+          elif [ -n "$id" ]; then
+            # The pull request no longer touches sensitive paths; remove the outdated notice.
+            gh api -X DELETE "repos/$REPO/issues/comments/$id" >/dev/null
           fi
 
           # Auto-merge only owner or Claude App pull requests that touch low-risk paths alone.

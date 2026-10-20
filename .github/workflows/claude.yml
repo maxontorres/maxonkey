@@ -23,7 +23,8 @@ env:
   CLAUDE_TOOLS: >-
     Edit,Write,Read,Glob,Grep,
     Bash(cargo fmt:*),Bash(cargo check:*),Bash(cargo clippy:*),Bash(cargo test:*),
-    Bash(cargo build:*),Bash(cargo tree:*),Bash(rustup show:*),
+    Bash(cargo build:*),Bash(cargo tree:*),Bash(cargo-deny --locked check:*),
+    Bash(rustup show:*),
     Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),
     Bash(git commit -m:*),Bash(git switch:*),Bash(git push -u origin claude/:*),
     Bash(git push origin HEAD:claude/:*),
@@ -65,6 +66,17 @@ jobs:
           # Title and body only: comments from other accounts are never passed to Claude.
           gh issue view "$NUMBER" --repo "$GITHUB_REPOSITORY" --json title,body \
             --template '# {{.title}}{{"\n\n"}}{{.body}}{{"\n"}}' > "$RUNNER_TEMP/claude-input/issue.md"
+      - name: Install pinned cargo-deny
+        env:
+          CARGO_DENY_VERSION: "0.20.2"
+          CARGO_DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+        run: |
+          archive="cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl"
+          curl -sSfL -o "$RUNNER_TEMP/cargo-deny.tgz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/${archive}.tar.gz"
+          echo "${CARGO_DENY_SHA256}  $RUNNER_TEMP/cargo-deny.tgz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/cargo-deny.tgz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/${archive}" >> "$GITHUB_PATH"
       - uses: anthropics/claude-code-action@5eb090f3c3afd701a0672cd32981197ca27688f6 # v1.0.253
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -92,6 +104,7 @@ jobs:
                No body, no trailers, no Co-authored-by, no AI attribution. The commit-msg hook is enabled;
                never bypass it.
             4. Run every verification command listed in AGENTS.md, plus `python3 tests/spec_check.py`.
+               When dependencies change, run `cargo-deny --locked check advisories licenses`.
                Report only results you observed. If a check fails and you cannot fix it, say so.
             5. Run `git push -u origin claude/issue-${{ github.event.issue.number }}`, then
                `gh pr create --base main --title "<Type: Description>" --body-file <file>`, filling in
@@ -150,6 +163,8 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           cycle=$((done_cycles + 1))
+          # A new authorized cycle means automation is no longer stopped.
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/labels/needs-owner" >/dev/null 2>&1 || true
           gh pr comment "$NUMBER" -R "$GITHUB_REPOSITORY" --body \
             "$MARKER"$'\n'"Claude correction cycle $cycle of $MAX_CYCLES started."
           { echo "run=true"; echo "head=$head"; echo "cycle=$cycle"; } >> "$GITHUB_OUTPUT"
@@ -178,6 +193,18 @@ jobs:
             echo "## CI checks on the current commit"
             gh pr checks "$NUMBER" -R "$GITHUB_REPOSITORY" || true
           } > "$dir/findings.md"
+      - name: Install pinned cargo-deny
+        if: steps.gate.outputs.run == 'true'
+        env:
+          CARGO_DENY_VERSION: "0.20.2"
+          CARGO_DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+        run: |
+          archive="cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl"
+          curl -sSfL -o "$RUNNER_TEMP/cargo-deny.tgz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/${archive}.tar.gz"
+          echo "${CARGO_DENY_SHA256}  $RUNNER_TEMP/cargo-deny.tgz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/cargo-deny.tgz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/${archive}" >> "$GITHUB_PATH"
       - uses: anthropics/claude-code-action@5eb090f3c3afd701a0672cd32981197ca27688f6 # v1.0.253
         if: steps.gate.outputs.run == 'true'
         with:
@@ -207,7 +234,8 @@ jobs:
                that explains the finding, then stop.
             3. Commit messages are exactly one line, `Type: Short description`. No body, no trailers,
                no Co-authored-by, no AI attribution. Never bypass the commit-msg hook.
-            4. Run the verification commands in AGENTS.md and `python3 tests/spec_check.py`. Report only
+            4. Run the verification commands in AGENTS.md and `python3 tests/spec_check.py` (and
+               `cargo-deny --locked check advisories licenses` if dependencies change). Report only
                results you observed.
             5. Push with `git push origin HEAD:${{ steps.gate.outputs.head }}`, then post one
                `gh pr comment ${{ env.NUMBER }}` listing what you fixed, what you did not fix and why,
