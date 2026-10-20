@@ -267,5 +267,9 @@ trigger workflows from its own workflow token. The PR's checks already tested th
   `Type: Short description`. Rewrite the commit on its branch before merging.
 - **`PR metadata` fails:** fix the PR title, remove AI attribution from the description,
   or add a `Spec: specs/NNN-name` line for code changes.
+- **Codex did not review a new commit:** Codex reviews when a PR opens or a draft is
+  marked ready, and when a person comments `@codex review`; it ignores that comment from the
+  workflow bot. After 30 minutes the Factory tells you once. Set Codex to review every push
+  in Codex settings, or comment `@codex review` yourself.
 - **A low-risk PR did not merge:** open the latest **Factory** run. It prints the CI and
   Codex state it saw, for example `ci=passed codex=pending`.

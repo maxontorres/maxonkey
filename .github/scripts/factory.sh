@@ -125,7 +125,14 @@ fi
 
 if [ "$codex" = missing ]; then
   # A new commit does not start a Codex review by itself; request one once per commit.
-  if ! jq -e --arg t "$CODEX_MARKER sha=$head -->" 'any(.[]; .user.login == "github-actions[bot]" and (.body | contains($t)))' <<< "$comments" >/dev/null; then
+  requested=$(jq -r --arg t "$CODEX_MARKER sha=$head -->" \
+    '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains($t))) | .created_at] | first // empty' <<< "$comments")
+  if [ -n "$requested" ] && [ $(( $(date -u +%s) - $(date -u -d "$requested" +%s) )) -gt 1800 ]; then
+    # Codex may ignore requests from the workflow bot; say so once instead of waiting forever.
+    notify codex-silent "Codex has not reviewed \`${head:0:7}\` 30 minutes after it was requested. Comment \`@codex review\` yourself, or set Codex to review every push."
+    exit 0
+  fi
+  if [ -z "$requested" ]; then
     gh api "repos/$REPO/issues/$NUMBER/comments" -f body="@codex review
 $CODEX_MARKER sha=$head -->" >/dev/null
     echo "requested Codex review"

@@ -52,6 +52,10 @@ jobs:
           CODEX_REVIEW: ${{ vars.CODEX_REVIEW || 'required' }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            # Re-check open pull requests (catches missed events and silent reviews), then the queue.
+            for n in $(gh api "repos/$REPO/pulls?state=open&base=main&per_page=50" --jq '.[].number'); do
+              NUMBER=$n bash .github/scripts/factory.sh || echo "::warning::Factory check failed for #$n"
+            done
             bash .github/scripts/next-task.sh; exit 0
           fi
           if [ -z "$NUMBER" ] && [ -n "$HEAD_SHA" ]; then
