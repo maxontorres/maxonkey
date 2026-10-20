@@ -6,6 +6,8 @@
 # Needs REPO, MODE (implement|correct), BRANCH, BASE, NUMBER (issue or pull request),
 # BUNDLE, TITLE, BODY, COMMENT (base64), and id-token: write for the token exchange.
 set -euo pipefail
+# Paths below are file names, never pathspec patterns.
+export GIT_LITERAL_PATHSPECS=1
 
 decode() { printf '%s' "$1" | base64 -d 2>/dev/null || true; }
 result() { printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
@@ -27,9 +29,9 @@ if [ -n "$BUNDLE" ]; then
   [ "$(git rev-list --count "$BASE..$tip")" -le 100 ] || reject "Claude made more than 100 commits"
   # Agents never change .github/. A file there may differ from the base only where it now
   # matches main (brought in by merging main).
-  for path in $(git diff --no-renames --name-only "$BASE" "$tip" -- .github); do
-    git diff --quiet origin/main "$tip" -- "$path" || reject "Claude changed $path; agents never edit .github/"
-  done
+  while IFS= read -r -d '' path; do
+    git diff --quiet origin/main "$tip" -- "$path" || reject "Claude changed .github/ ($path); agents never edit .github/"
+  done < <(git diff -z --no-renames --name-only "$BASE" "$tip" -- .github)
 fi
 
 # The Claude GitHub App token, from the same exchange claude-code-action uses. It is
@@ -51,7 +53,10 @@ if [ -n "$tip" ]; then
   echo "Pushed ${tip:0:7} to $BRANCH"
 fi
 
-if [ "$MODE" = implement ] && [ -n "$tip" ]; then
+# Open the pull request, also when an earlier attempt pushed the branch but did not open it.
+head=${tip:-$BASE}
+remote=$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)
+if [ "$MODE" = implement ] && [ "$remote" = "$head" ] && [ "$(git rev-list --count "origin/main..$head")" -gt 0 ]; then
   pr=$(GH_TOKEN=$app gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
   if [ -z "$pr" ]; then
     title=$(decode "$TITLE" | head -1 | cut -c1-200)
@@ -59,6 +64,7 @@ if [ "$MODE" = implement ] && [ -n "$tip" ]; then
     [ -s "$RUNNER_TEMP/pr-body.md" ] || printf 'Closes #%s\n' "$NUMBER" > "$RUNNER_TEMP/pr-body.md"
     GH_TOKEN=$app gh pr create --repo "$REPO" --base main --head "$BRANCH" \
       --title "${title:-Chore: Implement issue #$NUMBER}" --body-file "$RUNNER_TEMP/pr-body.md"
+    published=yes
   fi
 fi
 

@@ -27,15 +27,16 @@ if git bundle create "$RUNNER_TEMP/work.bundle" "$BASE..HEAD" 2>/dev/null; then
   bundle=$(base64 -w0 < "$RUNNER_TEMP/work.bundle")
   size=${#bundle}
 fi
-# GitHub limits a job's outputs to 1 MB in total.
-if [ "$size" -gt 800000 ]; then
+# GitHub limits a job's outputs to 1 MB in total, counted as UTF-16 (2 bytes per character),
+# so the bundle gets 400,000 characters and the other outputs stay under about 60,000.
+if [ "$size" -gt 400000 ]; then
   out toobig true
 else
   [ "$size" -eq 0 ] || out bundle "$bundle"
 fi
-for name in pr-title.txt:title pr-body.md:body comment.md:comment; do
-  file="$OUT/${name%%:*}"
-  [ -s "$file" ] && out "${name##*:}" "$(head -c 60000 "$file" | base64 -w0)"
+for name in pr-title.txt:title:500 pr-body.md:body:20000 comment.md:comment:20000; do
+  IFS=: read -r file key limit <<< "$name"
+  [ -s "$OUT/$file" ] && out "$key" "$(head -c "$limit" "$OUT/$file" | base64 -w0)"
 done
 
 # Denied tool calls show their command; failed calls are only counted, because command
@@ -50,4 +51,6 @@ errors=$(jq -rs '[.[] | select(.type == "user") | .message.content[]?
       + "; see the log."' "$log" 2>/dev/null || true)
 report="Claude exit status: $status${report:+$'\n\n'$report}${errors:+$'\n\n'$errors}"
 out report "$(printf '%s' "$report" | head -c 4000 | base64 -w0)"
-exit 0
+# A failed run is not published: the outputs above are kept for the owner notice, and the
+# failed step sends the publish job to its retry and notice path.
+exit "$status"
