@@ -85,7 +85,7 @@ jobs:
             git show "$BASE_SHA:.githooks/commit-msg" > "$RUNNER_TEMP/commit-msg"
             hook="$RUNNER_TEMP/commit-msg"
           fi
-          attribution='co-authored-by:|generated (with|by) \[?(claude|codex|chatgpt|an? ai)|written by (claude|codex)|created with (claude|codex)|🤖'
+          attribution='co-authored-by:|(generated|written|created|made|authored) (with|by|using) \[?(the )?(claude|codex|chatgpt|gpt|copilot|openai|anthropic|(an? )?ai)\b|ai[- ]generated|🤖'
           status=0
           for c in $commits; do
             git cat-file commit "$c" | sed '1,/^$/d' > "$RUNNER_TEMP/msg"
@@ -111,10 +111,10 @@ jobs:
           echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
           # Use built-in rules from outside the checkout so a PR cannot add its own
-          # .gitleaks.toml or .gitleaksignore to silence the scan.
+          # .gitleaks.toml, .gitleaksignore, or inline gitleaks:allow comments to silence the scan.
           printf '[extend]\nuseDefault = true\n' > "$RUNNER_TEMP/gitleaks.toml"
           : > "$RUNNER_TEMP/gitleaksignore"
           "$RUNNER_TEMP/gitleaks" git --redact --no-banner \
-            --config "$RUNNER_TEMP/gitleaks.toml" --gitleaks-ignore-path "$RUNNER_TEMP/gitleaksignore" .
+            --config "$RUNNER_TEMP/gitleaks.toml" --gitleaks-ignore-path "$RUNNER_TEMP/gitleaksignore" --ignore-gitleaks-allow .
       - name: Specification and link check
         run: python3 tests/spec_check.py
