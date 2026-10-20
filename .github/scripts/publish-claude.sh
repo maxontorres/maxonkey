@@ -69,7 +69,7 @@ remote=$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)
 open_pr=false
 if [ "$MODE" = implement ] && { [ -n "$tip" ] || [ "$remote" = "$BASE" ]; } \
    && [ "$(git rev-list --count "origin/main..$head")" -gt 0 ] \
-   && [ -z "$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')" ]; then
+   && [ "$(gh api "repos/$REPO/pulls?state=open&head=${REPO%%/*}:$BRANCH" --jq length)" = 0 ]; then
   open_pr=true
   decode "$TITLE" | head -1 > "$RUNNER_TEMP/pr-title.txt"
   sh .githooks/commit-msg "$RUNNER_TEMP/pr-title.txt" >/dev/null 2>&1 \
@@ -80,7 +80,11 @@ if [ "$MODE" = implement ] && { [ -n "$tip" ] || [ "$remote" = "$BASE" ]; } \
     || reject "Claude's pull request title or description contains AI self-attribution"
   # Same rule as the PR metadata check: code and test changes, including files renamed out of
   # src/ or tests/, name an existing specification.
-  if git diff --no-renames --name-only "origin/main...$head" | grep -Eq '^(src|tests)/'; then
+  code=false
+  while IFS= read -r -d '' path; do
+    case "$path" in src/*|tests/*) code=true ;; esac
+  done < <(git diff -z --no-renames --name-only "origin/main...$head")
+  if [ "$code" = true ]; then
     spec=$(grep -Eo 'Spec: specs/[0-9]{3}-[a-z0-9-]+' "$RUNNER_TEMP/pr-body.md" | head -1 | cut -c7- || true)
     { [ -n "$spec" ] && git cat-file -e "$head:$spec/spec.md" 2>/dev/null; } \
       || reject "Claude's pull request description has no 'Spec: specs/NNN-name' line for an existing specification"

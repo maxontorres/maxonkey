@@ -104,9 +104,9 @@ jobs:
           fi
           # One task at a time: wait while another Claude pull request is still in progress.
           busy=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" --jq \
-            "[.[] | select(.user.login == \"claude[bot]\" and .head.ref != \"claude/issue-$ISSUE\" and (.labels | any(.name == \"needs-owner\") | not))] | length")
+            "[.[] | select(.user.login == \"claude[bot]\" and .head.repo.full_name == \"$GITHUB_REPOSITORY\" and .head.ref != \"claude/issue-$ISSUE\" and (.labels | any(.name == \"needs-owner\") | not))] | length")
           mine=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" --jq \
-            "[.[] | select(.head.ref == \"claude/issue-$ISSUE\")] | length")
+            "[.[] | select(.head.ref == \"claude/issue-$ISSUE\" and .head.repo.full_name == \"$GITHUB_REPOSITORY\")] | length")
           if [ "$busy" != 0 ] || [ "$mine" != 0 ]; then
             echo "Queued: another Claude pull request is in progress, or this issue already has one"
             echo "run=false" >> "$GITHUB_OUTPUT"; exit 0

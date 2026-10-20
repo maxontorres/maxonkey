@@ -26,9 +26,16 @@ out() { printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
 failed=""
 [ "$CLAUDE_OUTCOME" = success ] || failed="Claude did not finish (step outcome: $CLAUDE_OUTCOME)."
 # Only committed work is handed over.
-# Files marked assume-unchanged or skip-worktree would hide edits from git status.
-if [ -z "$failed" ] && { [ -n "$(git status --porcelain)" ] || git ls-files -v | grep -Eq '^([a-z]|S) '; }; then
-  git status --short | head -20
+# Claude controls this repository's Git settings, so check for leftovers in ways those
+# settings cannot hide: tracked changes with file modes, untracked files that only the
+# committed .gitignore files exclude, and files marked assume-unchanged or skip-worktree.
+leftovers() {
+  git -c core.fileMode=true status --porcelain --untracked-files=no
+  git ls-files --others --exclude-per-directory=.gitignore
+  git ls-files -v | grep -E '^([a-z]|S) ' || true
+}
+if [ -z "$failed" ] && [ -n "$(leftovers)" ]; then
+  leftovers | head -20
   failed="Claude left uncommitted changes, so nothing was published."
 fi
 
@@ -38,6 +45,9 @@ fi
 if git bundle create "$RUNNER_TEMP/work.bundle" "$BASE..HEAD" 2>/dev/null; then
   bundle=$(base64 -w0 < "$RUNNER_TEMP/work.bundle")
   if [ "${#bundle}" -gt 120000 ]; then out toobig true; else out bundle "$bundle"; fi
+elif [ "$(git rev-parse HEAD)" != "$BASE" ]; then
+  # Commits exist but could not be packaged, so nothing may be published as if none existed.
+  [ -n "$failed" ] || failed="The commits Claude made could not be packaged for publishing."
 fi
 for name in pr-title.txt:title:500 pr-body.md:body:20000 comment.md:comment:20000; do
   IFS=: read -r file key limit <<< "$name"
