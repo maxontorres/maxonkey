@@ -70,11 +70,13 @@ The GitHub workflow is described in [docs/automation.md](docs/automation.md).
 - Claude Code implements on `claude/` branches and opens pull requests against `main`.
   Codex reviews independently. AI review text is evidence for the owner, never a
   substitute for CI or the owner's GitHub approval.
-- At most two Claude correction cycles run per pull request; then the owner decides.
+- The Factory workflow starts Claude corrections for CI failures and Codex findings on
+  Claude pull requests. At most two correction cycles run per pull request; then the
+  owner decides.
 - Serious security findings are escalated to the owner, not fixed autonomously.
 - Agents never merge, approve, enable auto-merge, change labels, edit `.github/`,
-  bypass hooks, or change repository settings. Only `.github/workflows/pr-risk.yml`
-  enables auto-merge, and only for the low-risk paths listed in `.github/CODEOWNERS`.
+  bypass hooks, or change repository settings. Only `.github/workflows/factory.yml`
+  merges, and only pull requests limited to the low-risk paths in `.github/CODEOWNERS`.
 - Pull requests use `.github/pull_request_template.md`, a `Type: Description` title,
   and a `Spec: specs/NNN-name` line when code or tests change.
 - Merge commits follow Rule 1 too, for example
