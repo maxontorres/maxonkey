@@ -1,0 +1,106 @@
+name: PR risk
+
+# Labels pull requests, escalates security-sensitive changes, and sets auto-merge.
+# pull_request_target runs this file from the base branch, so a pull request cannot
+# change the commands that run with these write permissions. Never add a checkout of
+# the pull request head, and never execute pull request files, in this workflow.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+
+permissions: {}
+
+concurrency:
+  group: pr-risk-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  risk:
+    name: Risk classification
+    # Fork pull requests are skipped: they are never labeled or auto-merged.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      # No checkout: this job never runs pull request code with a write token.
+      - name: Classify, label, escalate, and set auto-merge
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          set -euo pipefail
+          files=$(gh api --paginate "repos/$REPO/pulls/$NUMBER/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' | sort -u)
+          # Low-risk paths are the unowned lines of CODEOWNERS on the base branch,
+          # so a pull request cannot widen its own eligibility.
+          lowrisk=$(gh api -H 'Accept: application/vnd.github.raw' \
+            "repos/$REPO/contents/.github/CODEOWNERS?ref=$BASE_REF" 2>/dev/null \
+            | grep -E '^/[^[:space:]]+$' | cut -c2- || true)
+          sensitive="" eligible=true
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            printf '%s\n' "$lowrisk" | grep -Fxq -- "$f" || eligible=false
+            case "$f" in
+              src/crypto.rs|src/secret.rs|src/vault.rs|src/store.rs|src/paths.rs|src/prompt.rs|\
+              src/commands.rs|src/main.rs|src/cli.rs|tests/cli.rs|Cargo.toml|Cargo.lock|deny.toml|rust-toolchain.toml|\
+              .github/*|.githooks/*|.claude/*|.mcp.json|.agents/*|.specify/memory/*|\
+              AGENTS.md|CLAUDE.md|docs/security.md|docs/adr/*|specs/*/spec.md|tests/vault_pty.py|\
+              *mcp*|*auth*|*recover*|*broker*|*permission*|*secret*|*crypt*|*key*)
+                sensitive="$sensitive- \`$f\`"$'\n' ;;
+            esac
+          done <<< "$files"
+          [ -z "$files" ] && eligible=false
+
+          gh label create security-sensitive --color B60205 --force \
+            --description "Owner approval and independent review required" >/dev/null
+          gh label create low-risk --color 0E8A16 --force \
+            --description "Auto-merge eligible after all checks pass" >/dev/null
+          set_label() {
+            if [ "$2" = true ]; then
+              gh api "repos/$REPO/issues/$NUMBER/labels" -f "labels[]=$1" >/dev/null
+            else
+              gh api -X DELETE "repos/$REPO/issues/$NUMBER/labels/$1" >/dev/null 2>&1 || true
+            fi
+          }
+          set_label security-sensitive "$([ -n "$sensitive" ] && echo true || echo false)"
+          set_label low-risk "$eligible"
+
+          marker='<!-- maxonkey-security-escalation -->'
+          id=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -1)
+          if [ -n "$sensitive" ]; then
+            body="$marker
+          @$OWNER this pull request changes security-sensitive paths:
+
+          $sensitive
+          Before merging: an independent Codex review of the current commit (comment \`@codex review\`
+          if none appeared), owner approval, and green CI. Auto-merge is disabled for this pull request."
+            if [ -n "$id" ]; then
+              gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" >/dev/null
+            else
+              gh pr comment "$NUMBER" --body "$body"
+            fi
+          elif [ -n "$id" ]; then
+            # The pull request no longer touches sensitive paths; remove the outdated notice.
+            gh api -X DELETE "repos/$REPO/issues/comments/$id" >/dev/null
+          fi
+
+          # Auto-merge only owner or Claude App pull requests that touch low-risk paths alone.
+          if [ "$eligible" = true ] && [ "$DRAFT" = false ] && \
+             { [ "$AUTHOR" = "$OWNER" ] || [ "$AUTHOR" = "claude[bot]" ]; }; then
+            gh pr merge "$NUMBER" --auto --rebase \
+              || echo "::warning::Auto-merge not enabled; turn on 'Allow auto-merge' in repository settings"
+          else
+            gh pr merge "$NUMBER" --disable-auto 2>/dev/null || true
+          fi
+          echo "eligible=$eligible sensitive=$([ -n "$sensitive" ] && echo yes || echo no)"

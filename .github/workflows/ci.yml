@@ -70,12 +70,14 @@ jobs:
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          # The PR head, not GitHub's synthetic merge checkout, so branch merge commits are checked.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           # Validate only the new commits; earlier history is never rewritten.
           if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
-            commits=$(git rev-parse HEAD)
+            commits=$HEAD_SHA
           else
-            commits=$(git rev-list --no-merges "$BASE_SHA..HEAD")
+            commits=$(git rev-list "$BASE_SHA..$HEAD_SHA")
           fi
           # On pull requests, use the base branch's validator so a PR cannot weaken its own check.
           hook=.githooks/commit-msg
@@ -83,11 +85,16 @@ jobs:
             git show "$BASE_SHA:.githooks/commit-msg" > "$RUNNER_TEMP/commit-msg"
             hook="$RUNNER_TEMP/commit-msg"
           fi
+          attribution='co-authored-by:|generated (with|by) \[?(claude|codex|chatgpt|an? ai)|written by (claude|codex)|created with (claude|codex)|🤖'
           status=0
           for c in $commits; do
             git cat-file commit "$c" | sed '1,/^$/d' > "$RUNNER_TEMP/msg"
             if ! sh "$hook" "$RUNNER_TEMP/msg"; then
               echo "::error::Commit $c does not follow 'Type: Short description'"
+              status=1
+            fi
+            if grep -Eiq "$attribution" "$RUNNER_TEMP/msg"; then
+              echo "::error::Commit $c contains AI self-attribution (AGENTS.md Rule 2)"
               status=1
             fi
           done
@@ -103,6 +110,11 @@ jobs:
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
           echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
-          "$RUNNER_TEMP/gitleaks" git --redact --no-banner .
+          # Use built-in rules from outside the checkout so a PR cannot add its own
+          # .gitleaks.toml or .gitleaksignore to silence the scan.
+          printf '[extend]\nuseDefault = true\n' > "$RUNNER_TEMP/gitleaks.toml"
+          : > "$RUNNER_TEMP/gitleaksignore"
+          "$RUNNER_TEMP/gitleaks" git --redact --no-banner \
+            --config "$RUNNER_TEMP/gitleaks.toml" --gitleaks-ignore-path "$RUNNER_TEMP/gitleaksignore" .
       - name: Specification and link check
         run: python3 tests/spec_check.py
