@@ -37,9 +37,10 @@ The shared rules for every agent are in [AGENTS.md](../AGENTS.md).
 5. **Codex reviews independently.** Codex reviews a new PR on its own. Codex reads the
    `Code Review Rules` in AGENTS.md and posts a normal GitHub review.
 6. **The Factory decides the next step.** The [Factory workflow](../.github/workflows/factory.yml)
-   runs whenever CI or a Codex review finishes. For each PR it:
+   runs whenever CI or a Codex review finishes, or `main` changes. It only reacts to GitHub
+   events: there is no schedule and no manual step. For each PR it:
    - waits for Codex, which reviews every push; if Codex has not reviewed a commit 20
-     minutes after CI passed, Codex CLI reviews it through the
+     minutes after CI passed, Codex CLI reviews it in the same Factory run through the
      [Codex fallback workflow](../.github/workflows/codex-fallback.yml) instead;
    - starts a Claude correction when CI fails or Codex reports findings on a Claude PR;
    - sets the **Independent review** status: pending until Codex reviewed the current
@@ -271,8 +272,8 @@ interrupted correction run, described below.
 | CI | [ci.yml](../.github/workflows/ci.yml), [pr-policy.yml](../.github/workflows/pr-policy.yml) | pull request | check runs |
 | Risk labels | [pr-risk.yml](../.github/workflows/pr-risk.yml) + [classify-pr.sh](../.github/scripts/classify-pr.sh) | `pull_request_target` (runs from `main`) | labels, security notice |
 | Codex review | Codex GitHub integration (reviews every push) | pull request opened or updated | review comments, summary comment |
-| Codex fallback | [codex-fallback.yml](../.github/workflows/codex-fallback.yml) | Factory, 20 min after CI passed with no Codex review | result comment, **Independent review** status |
-| Factory | [factory.yml](../.github/workflows/factory.yml) + [factory.sh](../.github/scripts/factory.sh), [next-task.sh](../.github/scripts/next-task.sh) | CI or fallback finished, Codex comment, schedule (minutes 7, 22, 37, 52) | **Independent review** status, corrections, merges, owner notices, next task |
+| Codex fallback | [codex-fallback.yml](../.github/workflows/codex-fallback.yml) (reusable workflow) | called by the Factory when CI passed and Codex has not reviewed the commit; waits until 20 min after CI, then reviews | result comment, **Independent review** status |
+| Factory | [factory.yml](../.github/workflows/factory.yml) + [factory.sh](../.github/scripts/factory.sh), [next-task.sh](../.github/scripts/next-task.sh) | CI or PR policy finished, Codex comment, push to `main` | **Independent review** status, corrections, merges, owner notices, next task |
 
 State that the Factory reads back on every run:
 
@@ -282,8 +283,10 @@ State that the Factory reads back on every run:
 - **Review state:** Codex's summary comment and the **Independent review** commit status.
 - **Owner notices:** one hidden `maxonkey-factory-status state=… sha=…` comment per state.
 
-The schedule re-checks every open PR and the queue, so a missed webhook or a runner restart
-is picked up again within about 15 minutes. An interrupted implementation run is picked up
+Every push to `main` (for example an owner merge) re-checks every open PR and the queue, so
+a missed webhook or a runner restart is picked up again at the next change on `main`, a new
+CI run, or a new Codex comment. Factory merges themselves do not trigger this, because GitHub
+does not start workflows from its own workflow token. An interrupted implementation run is picked up
 again too, because its issue stays in the queue until a PR exists. An interrupted correction
 run is not retried: its cycle comment already counts that commit as corrected, so the owner
 gets a "could not finish a correction" notice instead.
@@ -301,7 +304,7 @@ gets a "could not finish a correction" notice instead.
 | Claude implement: issue trigger, authentication, retry, failure notice | Working | Issue #3 runs |
 | Claude implement: opening a PR | **Not yet working** | See open issues |
 | Automatic correction, routine merge, next task | Built, simulated, not yet observed live | Needs a Claude PR |
-| Scheduled recovery runs | **Not yet observed** | See open issues |
+| Event-only triggers (no schedule) and Codex CLI fallback | Built, not yet observed live | See open issues |
 
 ## Open issues
 
@@ -312,9 +315,9 @@ gets a "could not finish a correction" notice instead.
    then fails every command with `bwrap: Can't create file at /home/.mcp.json`;
    `claude.yml` creates that file in advance. Not yet confirmed live. If it still fails, the
    owner notice lists the failed commands.
-2. **Scheduled Factory runs never fired** after the schedule was added. The schedule moved
-   to minutes 7, 22, 37, and 52; changing the file makes GitHub register it again. Not yet
-   confirmed live.
+2. **Scheduled Factory runs were unreliable** (hours apart instead of every 15 minutes), so
+   the schedule was removed. The Factory now runs only on GitHub events, and the Codex CLI
+   fallback runs inside the Factory run instead of being dispatched later. Not yet confirmed live.
 3. **Merge commits on `main`.** #4 and #5 were merged with merge commits, which break the
    one-line commit rule. Disable **Allow merge commits** (setup step 6).
 4. **The `main` ruleset is not configured** (setup step 7). Until it is, branch protection
@@ -323,8 +326,9 @@ gets a "could not finish a correction" notice instead.
    and opens PRs. Not yet confirmed live: the Claude App token exchange only works for
    workflow files already on `main`. If the publish job fails, the owner notice says why.
    The Claude jobs clone the repository without credentials, so they need it to stay public.
-6. **Codex fallback has no `OPENAI_API_KEY` secret.** If Codex skips a commit, the Factory
-   reports that once instead of reviewing it with Codex CLI.
+6. **Codex did not review #8**, a PR opened by the Claude GitHub App. The `OPENAI_API_KEY`
+   secret was added on 2026-10-21, so the Codex CLI fallback reviews such PRs. A commit whose
+   fallback reported "unavailable" is retried at its next Factory event.
 
 Merges made by the Factory do not start a new CI run on `main`, because GitHub does not
 trigger workflows from its own workflow token. The PR's checks already tested the result.
@@ -340,7 +344,7 @@ trigger workflows from its own workflow token. The PR's checks already tested th
 - **`PR metadata` fails:** fix the PR title, remove AI attribution from the description,
   or add a `Spec: specs/NNN-name` line for code changes.
 - **Codex did not review a new commit:** the Factory runs the Codex CLI fallback review
-  after 20 minutes. You are told only if the fallback cannot run (no `OPENAI_API_KEY`
+  20 minutes after CI passed, in the same Factory run (the **codex-fallback** job). You are told only if the fallback cannot run (no `OPENAI_API_KEY`
   secret, or it produced no result).
 - **A low-risk PR did not merge:** open the latest **Factory** run. It prints the CI and
   Codex state it saw, for example `ci=passed codex=pending`.
