@@ -3,12 +3,13 @@
 # Claude correction, merge a low-risk change, or tell the owner it is ready or blocked.
 # Runs only from trusted default-branch code (.github/workflows/factory.yml).
 # Needs GH_TOKEN, REPO, OWNER, NUMBER, CODEX_LOGIN, CODEX_REVIEW (required|off).
+# NO_FALLBACK=1 (after a fallback review) never requests another Codex CLI review.
 set -euo pipefail
 
 REQUIRED_CHECKS=("Verify (ubuntu-latest)" "Verify (windows-latest)" "Repository policy" "PR metadata")
 STATUS_MARKER="<!-- maxonkey-factory-status"
 FALLBACK_MARKER="<!-- maxonkey-codex-fallback sha="
-FALLBACK_AFTER=1200   # seconds after CI passes before Codex CLI reviews instead
+FALLBACK_AFTER=1200   # seconds Codex gets after CI passes before Codex CLI reviews instead
 
 pr=$(gh api "repos/$REPO/pulls/$NUMBER")
 field() { jq -r "$1" <<< "$pr"; }
@@ -136,23 +137,30 @@ fi
 [ "$ci" = passed ] || { echo "waiting for CI"; exit 0; }
 
 if [ "$codex" = missing ]; then
-  # Codex reviews each push on its own. If it has not reviewed this commit some time after
-  # CI passed, Codex CLI reviews it through GitHub Actions instead (once per commit).
-  ci_done=$(jq -r 'map(.completed_at // empty) | max // empty' <<< "$runs")
-  waited=$(( $(date -u +%s) - $(date -u -d "${ci_done:-now}" +%s) ))
+  # Codex reviews each push on its own. If it has not reviewed this commit, factory.yml
+  # gives it the rest of FALLBACK_AFTER seconds after CI passed, then Codex CLI reviews it
+  # in the same run (once per commit; retried while the OPENAI_API_KEY secret is missing).
   case "$fallback" in
-    *"state=unavailable"*|*"state=error"*)
-      notify codex-unavailable "Codex has not reviewed \`${head:0:7}\` and the Codex CLI fallback could not run (${fallback#*state=}). Check the Codex integration or the \`OPENAI_API_KEY\` secret."
+    *"state=error"*)
+      notify codex-unavailable "Codex has not reviewed \`${head:0:7}\` and the Codex CLI fallback review did not produce a result. Check the Codex integration and the \`OPENAI_API_KEY\` secret."
       exit 0 ;;
   esac
-  started=$(gh api "repos/$REPO/actions/workflows/codex-fallback.yml/runs?per_page=50" \
-    --jq "[.workflow_runs[] | select(.display_title == \"Codex fallback for #$NUMBER at $head\")] | length")
-  if [ "$waited" -gt "$FALLBACK_AFTER" ] && [ "$started" = 0 ]; then
-    gh workflow run codex-fallback.yml --repo "$REPO" -f pr="$NUMBER" -f sha="$head"
-    echo "started Codex CLI fallback review"
-  else
-    echo "waiting for Codex (${waited}s since CI passed)"
+  if [ -n "${NO_FALLBACK:-}" ]; then
+    case "$fallback" in
+      *"state=unavailable"*)
+        notify codex-unavailable "Codex has not reviewed \`${head:0:7}\` and the Codex CLI fallback cannot run: the repository has no \`OPENAI_API_KEY\` secret." ;;
+      *) echo "waiting for Codex" ;;
+    esac
+    exit 0
   fi
+  requested="${RUNNER_TEMP:-/tmp}/codex-fallback-requested"
+  if [ -e "$requested" ]; then echo "waiting for Codex (one fallback per run)"; exit 0; fi
+  ci_done=$(jq -r 'map(.completed_at // empty) | max // empty' <<< "$runs")
+  waited=$(( $(date -u +%s) - $(date -u -d "${ci_done:-now}" +%s) ))
+  wait=$(( FALLBACK_AFTER - waited )); [ "$wait" -gt 0 ] || wait=0
+  { echo "fallback_pr=$NUMBER"; echo "fallback_sha=$head"; echo "fallback_wait=$wait"; } >> "${GITHUB_OUTPUT:-/dev/null}"
+  touch "$requested"
+  echo "Codex CLI fallback review requested (waits ${wait}s for Codex first)"
   exit 0
 fi
 [ "$codex" = passed ] || { echo "waiting for Codex"; exit 0; }

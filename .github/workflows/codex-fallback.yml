@@ -1,29 +1,63 @@
 name: Codex fallback review
 
-# Runs only when the Factory finds that the Codex GitHub integration did not review a
-# commit. Codex CLI reviews the pull request head with read-only access and no GitHub
-# credentials; a separate job with write access publishes the result.
-run-name: Codex fallback for #${{ inputs.pr }} at ${{ inputs.sha }}
-
+# Called by the Factory (trusted code on the default branch) when the Codex GitHub
+# integration has not reviewed a commit after CI passed. It first gives Codex the rest of
+# its waiting time, then Codex CLI reviews the pull request head with read-only access and
+# no GitHub credentials; a separate job with write access publishes the result.
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       pr:
         description: Pull request number
         required: true
+        type: string
       sha:
         description: Head commit to review
         required: true
+        type: string
+      wait:
+        description: Seconds to keep waiting for the Codex integration first
+        required: false
+        type: string
+        default: "0"
+    secrets:
+      OPENAI_API_KEY:
+        required: false
 
 permissions: {}
 
-concurrency:
-  group: codex-fallback-${{ inputs.pr }}
-  cancel-in-progress: true
-
 jobs:
+  wait:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      pull-requests: read
+    outputs:
+      reviewed: ${{ steps.poll.outputs.reviewed }}
+    steps:
+      - id: poll
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEX_LOGIN: ${{ vars.CODEX_REVIEWER_LOGIN || 'chatgpt-codex-connector[bot]' }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ inputs.sha }}
+          WAIT: ${{ inputs.wait }}
+        run: |
+          # Stop early as soon as Codex posts its review state for this commit.
+          end=$(( $(date +%s) + WAIT ))
+          while :; do
+            if gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" | jq -s -e --arg c "$CODEX_LOGIN" --arg s "$SHA" \
+                'any(add // [] | .[]; .user.login == $c and (.body | contains("codex-review-state") and contains($s)))' >/dev/null; then
+              echo "Codex reviewed $SHA"; echo "reviewed=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            [ "$(date +%s)" -lt "$end" ] || break
+            sleep 60
+          done
+          echo "reviewed=false" >> "$GITHUB_OUTPUT"
+
   review:
-    if: github.actor == 'github-actions[bot]' || github.actor == github.repository_owner
+    needs: wait
+    if: needs.wait.outputs.reviewed != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -55,8 +89,7 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
-          # The Factory dispatches this run as github-actions[bot]; the job condition above
-          # already limits who can start it.
+          # Only the Factory calls this workflow, so the triggering account may be a bot.
           allow-bots: true
           output-schema: |
             {
@@ -107,6 +140,11 @@ jobs:
         run: |
           marker="<!-- maxonkey-codex-fallback sha=$SHA"
           if [ "$AVAILABLE" != true ]; then
+            # Say so once per commit; the Factory retries on its next event.
+            if gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" | jq -s -e --arg m "$marker state=unavailable" \
+                'any(add // [] | .[]; .user.login == "github-actions[bot]" and (.body | startswith($m)))' >/dev/null; then
+              exit 0
+            fi
             gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$marker state=unavailable -->
           Codex fallback review is unavailable: the repository has no \`OPENAI_API_KEY\` secret." >/dev/null
             exit 0
