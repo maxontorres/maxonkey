@@ -271,6 +271,7 @@ jobs:
       head: ${{ steps.gate.outputs.head }}
       sha: ${{ steps.gate.outputs.sha }}
       cycle: ${{ steps.gate.outputs.cycle }}
+      stopped: ${{ steps.gate.outputs.stopped }}
     steps:
       - name: Check pull request and cycle limit
         id: gate
@@ -306,7 +307,7 @@ jobs:
             gh api "repos/$GITHUB_REPOSITORY/issues/$NUMBER/labels" -f "labels[]=needs-owner" >/dev/null
             gh pr comment "$NUMBER" -R "$GITHUB_REPOSITORY" --body \
               "<!-- maxonkey-claude-limit sha=$sha -->"$'\n'"@$OWNER Claude stopped after $MAX_CYCLES correction cycles; ${REASON:-a new request} on \`${sha:0:7}\` still needs a fix. Fix it manually, or delete the cycle comments to allow more."
-            echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
+            { echo "run=false"; echo "stopped=true"; } >> "$GITHUB_OUTPUT"; exit 0
           fi
           cycle=$((done_cycles + 1))
           # A new authorized cycle means automation is no longer stopped.
@@ -314,6 +315,30 @@ jobs:
           gh pr comment "$NUMBER" -R "$GITHUB_REPOSITORY" --body \
             "$MARKER sha=$sha -->"$'\n'"Claude correction cycle $cycle of $MAX_CYCLES started${REASON:+ (${REASON})}."
           { echo "run=true"; echo "head=$head"; echo "sha=$sha"; echo "cycle=$cycle"; } >> "$GITHUB_OUTPUT"
+
+  # A pull request labeled needs-owner no longer holds the task queue, and no other event
+  # follows, so start the next queued issue from here.
+  correct-limit-queue:
+    needs: correct
+    if: needs.correct.outputs.stopped == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Start the next queued task
+        run: |
+          REPO=$GITHUB_REPOSITORY OWNER=$GITHUB_REPOSITORY_OWNER bash .github/scripts/next-task.sh \
+            || echo "::warning::Could not start the next queued task"
 
   correct-claude:
     needs: correct

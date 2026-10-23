@@ -53,8 +53,8 @@ The shared rules for every agent are in [AGENTS.md](../AGENTS.md).
    - otherwise posts one comment that mentions you, when a PR is ready for your approval
      or is blocked.
 7. **Corrections are limited.** Each PR gets at most two Claude correction cycles, and
-   each commit is corrected at most once. After that the PR is labeled `needs-owner`
-   and you get one comment.
+   each commit is corrected at most once. After that the PR is labeled `needs-owner`,
+   you get one comment, and the next queued issue starts.
 8. **Tasks run one at a time.** Label as many issues `claude:implement` as you like.
    The oldest one starts when no other Claude PR is in progress; the rest wait in the
    queue. A Claude run that fails is retried once; after a second failure the issue is
