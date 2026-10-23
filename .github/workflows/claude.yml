@@ -240,6 +240,9 @@ jobs:
           report=$(printf '%s' "$REPORT" | base64 -d 2>/dev/null || true)
           gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body \
             "@$GITHUB_REPOSITORY_OWNER Claude could not finish this issue after 2 attempts${REASON:+ ($REASON)}. Log: $RUN${report:+$'\n\n'$report}"
+          # No other event follows a final failure, so move the queue on from here.
+          REPO=$GITHUB_REPOSITORY OWNER=$GITHUB_REPOSITORY_OWNER bash .github/scripts/next-task.sh \
+            || echo "::warning::Could not start the next queued task"
 
   correct:
     if: >-

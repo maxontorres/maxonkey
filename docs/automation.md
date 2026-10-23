@@ -41,7 +41,9 @@ The shared rules for every agent are in [AGENTS.md](../AGENTS.md).
    events: there is no schedule and no manual step. For each PR it:
    - waits for Codex, which reviews every push; if Codex has not reviewed a commit 20
      minutes after CI passed, Codex CLI reviews it in the same Factory run through the
-     [Codex fallback workflow](../.github/workflows/codex-fallback.yml) instead;
+     [Codex fallback workflow](../.github/workflows/codex-fallback.yml) instead (one
+     review per PR at a time, never twice for the same commit; a sweep after a push to
+     `main` reviews every PR that needs it);
    - starts a Claude correction when CI fails or Codex reports findings on a Claude PR;
    - sets the **Independent review** status: pending until Codex reviewed the current
      commit, failed on findings, passed when clean;
@@ -56,7 +58,8 @@ The shared rules for every agent are in [AGENTS.md](../AGENTS.md).
 8. **Tasks run one at a time.** Label as many issues `claude:implement` as you like.
    The oldest one starts when no other Claude PR is in progress; the rest wait in the
    queue. A Claude run that fails is retried once; after a second failure the issue is
-   labeled `needs-owner`, you get one comment, and the queue moves on.
+   labeled `needs-owner`, you get one comment, and that same run starts the next
+   queued issue.
 
 The PR risk, Factory, and Claude dispatch workflows always run their copy on `main`,
 so a pull request cannot change the commands that hold write access.
