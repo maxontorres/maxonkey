@@ -43,12 +43,19 @@ jobs:
           SHA: ${{ inputs.sha }}
           WAIT: ${{ inputs.wait }}
         run: |
-          # Stop early as soon as Codex posts its review state for this commit.
+          # Stop early as soon as Codex posts its review state for this commit, or an
+          # earlier fallback run already published a result for it (never review twice).
           end=$(( $(date +%s) + WAIT ))
+          marker="<!-- maxonkey-codex-fallback sha=$SHA state="
           while :; do
-            if gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" | jq -s -e --arg c "$CODEX_LOGIN" --arg s "$SHA" \
-                'any(add // [] | .[]; .user.login == $c and (.body | contains("codex-review-state") and contains($s)))' >/dev/null; then
+            comments=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" | jq -s 'add // []')
+            if jq -e --arg c "$CODEX_LOGIN" --arg s "$SHA" \
+                'any(.[]; .user.login == $c and (.body | contains("codex-review-state") and contains($s)))' <<< "$comments" >/dev/null; then
               echo "Codex reviewed $SHA"; echo "reviewed=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            if jq -e --arg m "$marker" \
+                'any(.[]; .user.login == "github-actions[bot]" and (.body | startswith($m + "done") or startswith($m + "error")))' <<< "$comments" >/dev/null; then
+              echo "A fallback review of $SHA already finished"; echo "reviewed=true" >> "$GITHUB_OUTPUT"; exit 0
             fi
             [ "$(date +%s)" -lt "$end" ] || break
             sleep 60

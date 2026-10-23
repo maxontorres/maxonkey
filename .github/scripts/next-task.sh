@@ -7,8 +7,9 @@ set -euo pipefail
 
 busy=$(gh api "repos/$REPO/pulls?state=open&per_page=100" --jq \
   '[.[] | select(.user.login == "claude[bot]" and (.labels | any(.name == "needs-owner") | not))] | length')
+# The calling run never counts: claude.yml calls this from a run that is about to end.
 running=$(gh api "repos/$REPO/actions/workflows/claude.yml/runs?per_page=20" --jq \
-  '[.workflow_runs[] | select(.status != "completed" and (.event == "issues" or .event == "workflow_dispatch"))] | length')
+  "[.workflow_runs[] | select(.id != ${GITHUB_RUN_ID:-0} and .status != \"completed\" and (.event == \"issues\" or .event == \"workflow_dispatch\"))] | length")
 if [ "$busy" != 0 ] || [ "$running" != 0 ]; then
   echo "busy: $busy open Claude pull requests, $running Claude runs in progress"; exit 0
 fi

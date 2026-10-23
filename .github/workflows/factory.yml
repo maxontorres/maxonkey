@@ -46,9 +46,8 @@ jobs:
       checks: read
       statuses: write
     outputs:
-      fallback_pr: ${{ steps.next.outputs.fallback_pr }}
-      fallback_sha: ${{ steps.next.outputs.fallback_sha }}
-      fallback_wait: ${{ steps.next.outputs.fallback_wait }}
+      # JSON list of {pr, sha, wait}: one Codex CLI fallback review per entry.
+      fallbacks: ${{ steps.list.outputs.fallbacks }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,6 +58,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           NUMBER: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number }}
+          FALLBACK_LIST: ${{ runner.temp }}/fallbacks.jsonl
         run: |
           if [ "$GITHUB_EVENT_NAME" = push ]; then
             # Re-check open pull requests (catches missed events and silent reviews), then the queue.
@@ -72,28 +72,53 @@ jobs:
           fi
           [ -n "$NUMBER" ] || { echo "No pull request for this event"; exit 0; }
           NUMBER=$NUMBER bash .github/scripts/factory.sh
+      - name: List requested fallback reviews
+        id: list
+        env:
+          FALLBACK_LIST: ${{ runner.temp }}/fallbacks.jsonl
+        run: |
+          list=$(jq -sc 'unique_by(.pr)' "$FALLBACK_LIST" 2>/dev/null || echo '[]')
+          echo "fallbacks=${list:-[]}" >> "$GITHUB_OUTPUT"
+          echo "fallbacks=${list:-[]}"
 
-  # Codex has not reviewed the head commit: wait out the rest of its time, then review it
-  # with Codex CLI in the same run.
+  # Codex has not reviewed a head commit: wait out the rest of its time, then review it
+  # with Codex CLI in the same run. One review per pull request: a push sweep can list
+  # several, and the per-PR group keeps two runs from reviewing the same pull request at once.
   codex-fallback:
     needs: orchestrate
-    if: needs.orchestrate.outputs.fallback_pr != ''
+    if: needs.orchestrate.outputs.fallbacks != '' && needs.orchestrate.outputs.fallbacks != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.orchestrate.outputs.fallbacks) }}
+    concurrency:
+      group: codex-fallback-${{ matrix.pr }}
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: write
       statuses: write
     uses: ./.github/workflows/codex-fallback.yml
     with:
-      pr: ${{ needs.orchestrate.outputs.fallback_pr }}
-      sha: ${{ needs.orchestrate.outputs.fallback_sha }}
-      wait: ${{ needs.orchestrate.outputs.fallback_wait }}
+      pr: ${{ matrix.pr }}
+      sha: ${{ matrix.sha }}
+      wait: ${{ matrix.wait }}
     secrets:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-  # Act on the fallback result: merge, start a correction, or tell the owner.
+  # Act on each fallback result: merge, start a correction, or tell the owner.
   after-fallback:
     needs: [orchestrate, codex-fallback]
-    if: always() && needs.orchestrate.outputs.fallback_pr != ''
+    if: >-
+      always() && needs.orchestrate.result == 'success' &&
+      needs.orchestrate.outputs.fallbacks != '' && needs.orchestrate.outputs.fallbacks != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.orchestrate.outputs.fallbacks) }}
+    concurrency:
+      group: factory-after-fallback-${{ matrix.pr }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -110,6 +135,6 @@ jobs:
       - name: Next step after the fallback review
         env:
           GH_TOKEN: ${{ github.token }}
-          NUMBER: ${{ needs.orchestrate.outputs.fallback_pr }}
+          NUMBER: ${{ matrix.pr }}
           NO_FALLBACK: "1"
         run: bash .github/scripts/factory.sh

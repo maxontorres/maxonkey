@@ -4,6 +4,7 @@
 # Runs only from trusted default-branch code (.github/workflows/factory.yml).
 # Needs GH_TOKEN, REPO, OWNER, NUMBER, CODEX_LOGIN, CODEX_REVIEW (required|off).
 # NO_FALLBACK=1 (after a fallback review) never requests another Codex CLI review.
+# FALLBACK_LIST: file that collects fallback review requests, one JSON object per line.
 set -euo pipefail
 
 REQUIRED_CHECKS=("Verify (ubuntu-latest)" "Verify (windows-latest)" "Repository policy" "PR metadata")
@@ -153,13 +154,12 @@ if [ "$codex" = missing ]; then
     esac
     exit 0
   fi
-  requested="${RUNNER_TEMP:-/tmp}/codex-fallback-requested"
-  if [ -e "$requested" ]; then echo "waiting for Codex (one fallback per run)"; exit 0; fi
   ci_done=$(jq -r 'map(.completed_at // empty) | max // empty' <<< "$runs")
   waited=$(( $(date -u +%s) - $(date -u -d "${ci_done:-now}" +%s) ))
   wait=$(( FALLBACK_AFTER - waited )); [ "$wait" -gt 0 ] || wait=0
-  { echo "fallback_pr=$NUMBER"; echo "fallback_sha=$head"; echo "fallback_wait=$wait"; } >> "${GITHUB_OUTPUT:-/dev/null}"
-  touch "$requested"
+  # factory.yml runs one fallback per listed pull request (a push sweep can list several).
+  jq -nc --arg pr "$NUMBER" --arg sha "$head" --arg wait "$wait" '{pr: $pr, sha: $sha, wait: $wait}' \
+    >> "${FALLBACK_LIST:-/dev/null}"
   echo "Codex CLI fallback review requested (waits ${wait}s for Codex first)"
   exit 0
 fi
