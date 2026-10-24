@@ -606,7 +606,7 @@ pub fn unlock(path: &Path, credential: Credential<'_>) -> Result<Unlocked> {
     if path.symlink_metadata().is_err() {
         return Err(VaultError::NotInitialized(path.to_path_buf()));
     }
-    let store = Store::open(path, true)?;
+    let mut store = Store::open(path, true)?;
     let header = store.header()?;
     let vk = match credential {
         Credential::Passphrase(passphrase) => {
@@ -634,14 +634,15 @@ pub fn unlock(path: &Path, credential: Credential<'_>) -> Result<Unlocked> {
         }
     };
     // The vault key is now known to be correct, so any failure below is tampering.
-    let manifest_blob = store.manifest()?;
+    // One read transaction, so another process's commit cannot land between the reads.
+    let (manifest_blob, records) = store.snapshot()?;
     let manifest = crypto::open(&vk, &crypto::manifest_aad(&header.vault_id), &manifest_blob)
         .map_err(|_| VaultError::Integrity("the manifest failed authentication".into()))?;
     let (generation, expected) = decode_manifest(
         crypto::unpad(manifest.expose())
             .map_err(|_| VaultError::Integrity("the manifest is malformed".into()))?,
     )?;
-    let index = verify_records(&vk, &header, &expected, store.records()?)?;
+    let index = verify_records(&vk, &header, &expected, records)?;
     Ok(Unlocked {
         store,
         header,

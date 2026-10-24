@@ -231,37 +231,26 @@ impl Store {
         .transpose()
     }
 
+    /// Tests inspect stored ciphertext directly; the application reads through `snapshot`.
+    #[cfg(test)]
     pub fn manifest(&self) -> Result<Vec<u8>> {
-        self.conn
-            .query_row("SELECT blob FROM manifest WHERE singleton = 1", [], |row| {
-                row.get(0)
-            })
-            .optional()?
-            .ok_or_else(|| StoreError::Integrity("vault manifest is missing".into()))
+        read_manifest(&self.conn)
     }
 
     /// Every stored record, ordered by record id (ciphertext only).
+    #[cfg(test)]
     pub fn records(&self) -> Result<Vec<RawRecord>> {
-        let mut statement = self
-            .conn
-            .prepare("SELECT record_id, meta_blob, value_blob FROM records ORDER BY record_id")?;
-        let rows = statement.query_map([], |row| {
-            Ok((
-                row.get::<_, Vec<u8>>(0)?,
-                row.get::<_, Vec<u8>>(1)?,
-                row.get::<_, Option<Vec<u8>>>(2)?,
-            ))
-        })?;
-        let mut records = Vec::new();
-        for row in rows {
-            let (id, meta, value) = row?;
-            records.push(RawRecord {
-                id: fixed(id, "record id")?,
-                meta,
-                value,
-            });
-        }
-        Ok(records)
+        read_records(&self.conn)
+    }
+
+    /// The manifest and every record from one read transaction, so a write committed by
+    /// another process cannot fall between the two reads and look like damage.
+    pub fn snapshot(&mut self) -> Result<(Vec<u8>, Vec<RawRecord>)> {
+        let tx = self.conn.transaction()?;
+        let manifest = read_manifest(&tx)?;
+        let records = read_records(&tx)?;
+        tx.commit()?;
+        Ok((manifest, records))
     }
 
     /// Applies one record change and the new manifest in one `BEGIN IMMEDIATE` transaction
@@ -326,6 +315,36 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+}
+
+fn read_manifest(conn: &Connection) -> Result<Vec<u8>> {
+    conn.query_row("SELECT blob FROM manifest WHERE singleton = 1", [], |row| {
+        row.get(0)
+    })
+    .optional()?
+    .ok_or_else(|| StoreError::Integrity("vault manifest is missing".into()))
+}
+
+fn read_records(conn: &Connection) -> Result<Vec<RawRecord>> {
+    let mut statement =
+        conn.prepare("SELECT record_id, meta_blob, value_blob FROM records ORDER BY record_id")?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, Vec<u8>>(0)?,
+            row.get::<_, Vec<u8>>(1)?,
+            row.get::<_, Option<Vec<u8>>>(2)?,
+        ))
+    })?;
+    let mut records = Vec::new();
+    for row in rows {
+        let (id, meta, value) = row?;
+        records.push(RawRecord {
+            id: fixed(id, "record id")?,
+            meta,
+            value,
+        });
+    }
+    Ok(records)
 }
 
 fn fixed<const N: usize>(bytes: Vec<u8>, what: &str) -> Result<[u8; N]> {
