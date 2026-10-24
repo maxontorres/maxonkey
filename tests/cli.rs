@@ -60,6 +60,8 @@ fn status_reports_capabilities_and_vault_state() {
     for label in [
         "Vault init / passphrase / recovery",
         "Encryption / SQLite storage",
+        "Secret CRUD (CLI)",
+        "Projects / environments",
     ] {
         assert!(
             text.lines()
@@ -67,8 +69,7 @@ fn status_reports_capabilities_and_vault_state() {
         );
     }
     for label in [
-        "Secret CRUD",
-        "Backup / restore",
+        "Key rotation / backup / restore",
         "MCP server",
         "MCP owner approval",
     ] {
@@ -79,7 +80,54 @@ fn status_reports_capabilities_and_vault_state() {
     }
     assert!(text.contains("Vault: NOT INITIALIZED"));
     assert!(!text.contains("UNLOCKED"));
-    assert!(text.contains("Secrets cannot be stored yet"));
+    assert!(text.contains("maxonkey secret"));
+}
+
+#[test]
+fn secret_commands_check_input_and_vault_before_prompting() {
+    let (_dir, vault) = temp_vault();
+    // Missing vault: exit 5 without asking for a passphrase.
+    for args in [
+        vec!["secret", "get", "shop", "prod", "KEY"],
+        vec!["secret", "list"],
+        vec!["secret", "delete", "shop", "prod", "KEY", "--yes"],
+    ] {
+        let output = run(&[args.as_slice(), &["--vault", &vault]].concat());
+        assert_eq!(output.status.code(), Some(5), "{args:?}");
+        assert!(output.stdout.is_empty());
+    }
+    // Invalid names are usage errors (exit 2) and are never echoed back.
+    let long = "N".repeat(129);
+    for args in [
+        vec!["secret", "get", "shop", "prod", long.as_str()],
+        vec!["secret", "set", "shop", "", "KEY"],
+        vec!["secret", "list", "MK-CANARY\tname"],
+    ] {
+        let output = run(&[args.as_slice(), &["--vault", &vault]].concat());
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !error.contains(&long) && !error.contains("MK-CANARY"),
+            "{error}"
+        );
+    }
+    // --stdin with an empty or oversized value fails before any prompt.
+    for input in [Vec::new(), vec![b'x'; 64 * 1024 + 1]] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_maxonkey"))
+            .args([
+                "secret", "set", "shop", "prod", "KEY", "--stdin", "--vault", &vault,
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        let _ = child.stdin.take().unwrap().write_all(&input);
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{} bytes", input.len());
+    }
+    assert!(!std::path::Path::new(&vault).exists());
 }
 
 #[test]
@@ -126,6 +174,19 @@ fn credentials_cannot_be_passed_as_arguments() {
         let output = run(&["vault", "init", "--vault", &vault, option, "MK-CANARY-arg"]);
         assert_eq!(output.status.code(), Some(2), "{option}");
         assert!(!std::path::Path::new(&vault).exists());
+        let output = run(&[
+            "secret",
+            "set",
+            "p",
+            "e",
+            "n",
+            "--vault",
+            &vault,
+            option,
+            "MK-CANARY-arg",
+        ]);
+        assert_eq!(output.status.code(), Some(2), "{option}");
+        assert!(output.stdout.is_empty());
     }
 }
 

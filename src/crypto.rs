@@ -3,9 +3,11 @@
 //! - Argon2id v1.3 derives a key-encryption key (KEK) from the passphrase.
 //! - XChaCha20-Poly1305 with a fresh random 24-byte nonce seals every blob.
 //! - Blob layout: format byte ‖ nonce ‖ ciphertext ‖ tag.
+//! - SHA-256 digests of stored record blobs go into the manifest.
 
 use argon2::{Algorithm, Argon2, Block, Params, Version};
 use chacha20poly1305::{AeadInOut, KeyInit, XChaCha20Poly1305, XNonce};
+use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::secret::{KEY_LEN, Key, Passphrase, SecretBytes};
@@ -17,6 +19,10 @@ pub const TAG_LEN: usize = 16;
 pub const BLOB_FORMAT: u8 = 1;
 pub const PAD_BLOCK: usize = 64;
 pub const KDF_ARGON2ID: u8 = 1;
+pub const DIGEST_LEN: usize = 32;
+/// Field tags inside record AAD: which blob of a record a ciphertext belongs to.
+pub const FIELD_META: u8 = 1;
+pub const FIELD_VALUE: u8 = 2;
 
 const AAD_PREFIX: &[u8; 12] = b"MaxonKey/v1/";
 
@@ -192,6 +198,16 @@ pub fn unpad(padded: &[u8]) -> Result<&[u8], CryptoError> {
 pub enum Purpose {
     KeySlot = 1,
     Manifest = 2,
+    Record = 3,
+}
+
+/// SHA-256 over the concatenation of `parts`.
+pub fn sha256(parts: &[&[u8]]) -> [u8; DIGEST_LEN] {
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update(part);
+    }
+    hasher.finalize().into()
 }
 
 /// Fields bound into a key slot's associated data (SR-005).
@@ -220,15 +236,31 @@ pub fn slot_aad(binding: &SlotBinding<'_>) -> Vec<u8> {
     aad
 }
 
-/// Fixed-length AAD for the manifest: prefix ‖ purpose ‖ vault id ‖ zero record id ‖ field 0.
-pub fn manifest_aad(vault_id: &[u8; ID_LEN]) -> Vec<u8> {
+/// Fixed-length (46-byte) AAD for vault content: prefix ‖ purpose ‖ vault id ‖ record id ‖ field.
+fn content_aad(
+    purpose: Purpose,
+    vault_id: &[u8; ID_LEN],
+    record_id: &[u8; ID_LEN],
+    field: u8,
+) -> Vec<u8> {
     let mut aad = Vec::with_capacity(12 + 1 + 2 * ID_LEN + 1);
     aad.extend_from_slice(AAD_PREFIX);
-    aad.push(Purpose::Manifest as u8);
+    aad.push(purpose as u8);
     aad.extend_from_slice(vault_id);
-    aad.extend_from_slice(&[0; ID_LEN]);
-    aad.push(0);
+    aad.extend_from_slice(record_id);
+    aad.push(field);
     aad
+}
+
+/// AAD for the manifest: the record id is all zeros and the field is 0.
+pub fn manifest_aad(vault_id: &[u8; ID_LEN]) -> Vec<u8> {
+    content_aad(Purpose::Manifest, vault_id, &[0; ID_LEN], 0)
+}
+
+/// AAD for one blob of a record (`FIELD_META` or `FIELD_VALUE`), so a blob cannot move to
+/// another record, field, or vault.
+pub fn record_aad(vault_id: &[u8; ID_LEN], record_id: &[u8; ID_LEN], field: u8) -> Vec<u8> {
+    content_aad(Purpose::Record, vault_id, record_id, field)
 }
 
 #[cfg(test)]
@@ -332,7 +364,24 @@ pub(crate) mod tests {
         let aad = slot_aad(&binding);
         assert_eq!(aad.len(), 63);
         assert_eq!(&aad[..13], b"MaxonKey/v1/\x01");
-        assert_eq!(manifest_aad(&[0xAA; ID_LEN]).len(), 46);
+        let mut expected = b"MaxonKey/v1/\x02".to_vec();
+        expected.extend_from_slice(&[0xAA; ID_LEN]);
+        expected.extend_from_slice(&[0; ID_LEN + 1]);
+        assert_eq!(
+            manifest_aad(&[0xAA; ID_LEN]),
+            expected,
+            "manifest AAD changed"
+        );
+        let mut expected = b"MaxonKey/v1/\x03".to_vec();
+        expected.extend_from_slice(&[0xAA; ID_LEN]);
+        expected.extend_from_slice(&[0xCC; ID_LEN]);
+        expected.push(FIELD_VALUE);
+        assert_eq!(
+            record_aad(&[0xAA; ID_LEN], &[0xCC; ID_LEN], FIELD_VALUE),
+            expected,
+            "record AAD changed"
+        );
+        assert_eq!(expected.len(), 46);
         let blob = seal_with_nonce(&key_of(0), &aad, b"layout", &[9; NONCE_LEN]).unwrap();
         assert_eq!(hex(FROZEN_BLOB), blob, "blob layout changed");
     }
@@ -341,6 +390,33 @@ pub(crate) mod tests {
     const FROZEN_KEK: &str = "562c92fc17ccb36c5048c3d45fe6745b4706422b3098c88099718e09412a1393";
     const FROZEN_BLOB: &str = "01 090909090909090909090909090909090909090909090909
          79414d10c93b 44269392c3b6670bdae598efd6ac305b";
+
+    /// ST-01: FIPS 180-2 SHA-256 known answers; split input hashes like the joined input.
+    #[test]
+    fn sha256_known_answers() {
+        assert_eq!(
+            sha256(&[b"abc"]).to_vec(),
+            hex("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        );
+        assert_eq!(
+            sha256(&[]).to_vec(),
+            hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        );
+        assert_eq!(sha256(&[b"a", b"bc"]), sha256(&[b"abc"]));
+    }
+
+    #[test]
+    fn record_aad_differs_by_field_record_and_vault() {
+        let base = record_aad(&[1; ID_LEN], &[2; ID_LEN], FIELD_META);
+        for other in [
+            record_aad(&[1; ID_LEN], &[2; ID_LEN], FIELD_VALUE),
+            record_aad(&[1; ID_LEN], &[3; ID_LEN], FIELD_META),
+            record_aad(&[9; ID_LEN], &[2; ID_LEN], FIELD_META),
+            manifest_aad(&[1; ID_LEN]),
+        ] {
+            assert_ne!(base, other);
+        }
+    }
 
     #[test]
     fn wrong_key_aad_or_modified_blob_fails() {

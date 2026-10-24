@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
     about = "MaxonKey — local-first secrets manager prototype"
 )]
 #[command(
-    after_help = "Run without a command to launch the TUI. Passphrases are read only from the terminal.\nStoring secrets is not implemented yet."
+    after_help = "Run without a command to launch the TUI. Passphrases are read only from the terminal.\nSecret values are read from a hidden prompt or, with --stdin, from standard input."
 )]
 pub struct Cli {
     /// Use this vault file instead of the standard location
@@ -30,6 +30,42 @@ pub enum Command {
     /// Create and manage the encrypted vault
     #[command(subcommand)]
     Vault(VaultCommand),
+    /// Store, read, list, and delete secrets (asks for the passphrase every time)
+    #[command(subcommand)]
+    Secret(SecretCommand),
+}
+
+#[derive(Debug, PartialEq, Eq, Subcommand)]
+pub enum SecretCommand {
+    /// Create or update a secret; the value is read from a hidden prompt
+    Set {
+        project: String,
+        environment: String,
+        name: String,
+        /// Read the value from standard input instead (all bytes, unchanged)
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Print a secret's value to standard output
+    Get {
+        project: String,
+        environment: String,
+        name: String,
+    },
+    /// List secret names (never values), optionally for one project and environment
+    List {
+        project: Option<String>,
+        environment: Option<String>,
+    },
+    /// Delete a secret after confirmation on the terminal
+    Delete {
+        project: String,
+        environment: String,
+        name: String,
+        /// Do not ask for confirmation
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq, Subcommand)]
@@ -102,6 +138,73 @@ mod tests {
         assert_eq!(cli.vault, Some(PathBuf::from("x.db")));
     }
 
+    #[test]
+    fn parses_secret_commands() {
+        let owned = |s: &str| s.to_owned();
+        for (args, expected) in [
+            (
+                vec!["set", "shop", "prod", "STRIPE_KEY"],
+                SecretCommand::Set {
+                    project: owned("shop"),
+                    environment: owned("prod"),
+                    name: owned("STRIPE_KEY"),
+                    stdin: false,
+                },
+            ),
+            (
+                vec!["set", "shop", "prod", "STRIPE_KEY", "--stdin"],
+                SecretCommand::Set {
+                    project: owned("shop"),
+                    environment: owned("prod"),
+                    name: owned("STRIPE_KEY"),
+                    stdin: true,
+                },
+            ),
+            (
+                vec!["get", "shop", "prod", "STRIPE_KEY"],
+                SecretCommand::Get {
+                    project: owned("shop"),
+                    environment: owned("prod"),
+                    name: owned("STRIPE_KEY"),
+                },
+            ),
+            (
+                vec!["list"],
+                SecretCommand::List {
+                    project: None,
+                    environment: None,
+                },
+            ),
+            (
+                vec!["list", "shop", "prod"],
+                SecretCommand::List {
+                    project: Some(owned("shop")),
+                    environment: Some(owned("prod")),
+                },
+            ),
+            (
+                vec!["delete", "shop", "prod", "STRIPE_KEY", "--yes"],
+                SecretCommand::Delete {
+                    project: owned("shop"),
+                    environment: owned("prod"),
+                    name: owned("STRIPE_KEY"),
+                    yes: true,
+                },
+            ),
+        ] {
+            let cli = Cli::try_parse_from(["maxonkey", "secret"].into_iter().chain(args)).unwrap();
+            assert_eq!(cli.command, Some(Command::Secret(expected)));
+        }
+        // A value can never be given as an extra argument.
+        for args in [
+            vec!["secret", "set", "p", "e", "n", "MK-CANARY-value"],
+            vec!["secret", "get", "p", "e"],
+            vec!["secret", "list", "p", "e", "n"],
+        ] {
+            assert!(Cli::try_parse_from(["maxonkey"].into_iter().chain(args)).is_err());
+        }
+    }
+
     /// ST-11: there is no way to pass a credential or secret on the command line.
     #[test]
     fn credential_options_do_not_exist() {
@@ -116,6 +219,10 @@ mod tests {
                 vec!["vault", "init"],
                 vec!["vault", "change-passphrase"],
                 vec!["vault", "recover"],
+                vec!["secret", "set", "p", "e", "n"],
+                vec!["secret", "get", "p", "e", "n"],
+                vec!["secret", "list"],
+                vec!["secret", "delete", "p", "e", "n"],
             ] {
                 let args = ["maxonkey"]
                     .into_iter()

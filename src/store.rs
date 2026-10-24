@@ -71,6 +71,22 @@ pub struct Slot {
     pub wrapped_vk: Vec<u8>,
 }
 
+/// One `records` row: ciphertext only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawRecord {
+    pub id: [u8; ID_LEN],
+    pub meta: Vec<u8>,
+    pub value: Option<Vec<u8>>,
+}
+
+/// A single record change written together with a new manifest.
+#[derive(Debug)]
+pub enum Change {
+    /// Insert a new record or replace the blobs of an existing one.
+    Put(RawRecord),
+    Delete([u8; ID_LEN]),
+}
+
 fn configure(conn: &Connection, writable: bool) -> Result<()> {
     conn.pragma_update(None, "trusted_schema", "OFF")?;
     conn.pragma_update(None, "secure_delete", "ON")?;
@@ -224,10 +240,71 @@ impl Store {
             .ok_or_else(|| StoreError::Integrity("vault manifest is missing".into()))
     }
 
-    pub fn record_count(&self) -> Result<i64> {
-        Ok(self
+    /// Every stored record, ordered by record id (ciphertext only).
+    pub fn records(&self) -> Result<Vec<RawRecord>> {
+        let mut statement = self
             .conn
-            .query_row("SELECT count(*) FROM records", [], |row| row.get(0))?)
+            .prepare("SELECT record_id, meta_blob, value_blob FROM records ORDER BY record_id")?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Option<Vec<u8>>>(2)?,
+            ))
+        })?;
+        let mut records = Vec::new();
+        for row in rows {
+            let (id, meta, value) = row?;
+            records.push(RawRecord {
+                id: fixed(id, "record id")?,
+                meta,
+                value,
+            });
+        }
+        Ok(records)
+    }
+
+    /// Applies one record change and the new manifest in one `BEGIN IMMEDIATE` transaction
+    /// (SR-012). Fails without writing if the manifest is no longer `expected_manifest`,
+    /// that is, if another process changed the vault since it was unlocked.
+    pub fn write(
+        &mut self,
+        expected_manifest: &[u8],
+        change: &Change,
+        new_manifest: &[u8],
+    ) -> Result<()> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current: Vec<u8> =
+            tx.query_row("SELECT blob FROM manifest WHERE singleton = 1", [], |row| {
+                row.get(0)
+            })?;
+        if current != expected_manifest {
+            return Err(StoreError::Integrity(
+                "the vault was changed by another process; run the command again".into(),
+            ));
+        }
+        let changed = match change {
+            Change::Put(record) => tx.execute(
+                "INSERT INTO records (record_id, meta_blob, value_blob) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (record_id) DO UPDATE SET meta_blob = ?2, value_blob = ?3",
+                params![record.id.as_slice(), record.meta, record.value],
+            )?,
+            Change::Delete(id) => tx.execute(
+                "DELETE FROM records WHERE record_id = ?1",
+                params![id.as_slice()],
+            )?,
+        };
+        if changed != 1 {
+            return Err(StoreError::Integrity("record to change is missing".into()));
+        }
+        tx.execute(
+            "UPDATE manifest SET blob = ?1 WHERE singleton = 1",
+            params![new_manifest],
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Replaces one key slot atomically. Fails if the header changed since unlock.
