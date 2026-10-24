@@ -42,7 +42,7 @@
 
 - [x] T101 Add `sha2 =0.11.1`; record blob layouts and AAD (purpose 3); manifest entries with digests
 - [x] T102 In-memory metadata index; `secret set|get|list|delete` (FR-003, SR-020–SR-023)
-- [ ] T103 Transactional writes updating records and manifest (SR-012); crash-injection tests (ST-09)
+- [x] T103 Transactional writes updating records and manifest (SR-012); crash-injection tests (ST-09)
 - [ ] T104 `vault rotate-key` (ST-18)
 - [ ] T105 `vault backup|verify|restore`, automatic backups before migration/restore (ST-16)
 - [ ] T106 Remaining ST-02, ST-03, ST-04, ST-05, ST-14 coverage for records; SC-003 timing
