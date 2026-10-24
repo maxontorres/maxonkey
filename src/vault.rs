@@ -237,7 +237,11 @@ fn decode_manifest(plain: &[u8]) -> Result<(u64, BTreeMap<RecordId, Digest>)> {
     }
     let mut entries = BTreeMap::new();
     let mut previous: Option<RecordId> = None;
-    for chunk in plain[MANIFEST_HEADER_LEN..].chunks_exact(MANIFEST_ENTRY_LEN) {
+    // The length check above guarantees there is no remainder.
+    for chunk in plain[MANIFEST_HEADER_LEN..]
+        .as_chunks::<MANIFEST_ENTRY_LEN>()
+        .0
+    {
         let id: RecordId = chunk[..ID_LEN].try_into().expect("sixteen bytes");
         if previous.is_some_and(|p| p >= id) {
             return Err(bad("is malformed"));
