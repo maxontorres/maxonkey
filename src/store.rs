@@ -150,6 +150,22 @@ pub struct Store {
 
 impl Store {
     pub fn open(path: &Path, writable: bool) -> Result<Self> {
+        match Self::open_checked(path, writable) {
+            // A write was interrupted (crash, power loss, kill) and left a hot rollback
+            // journal, which a read-only connection cannot apply. Opening read-write once
+            // lets SQLite roll the file back to its last committed state, exactly as the
+            // next unlock would; nothing else is written.
+            Err(StoreError::Sqlite(rusqlite::Error::SqliteFailure(error, _)))
+                if !writable && error.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK =>
+            {
+                drop(Self::open_checked(path, true)?);
+                Self::open_checked(path, false)
+            }
+            other => other,
+        }
+    }
+
+    fn open_checked(path: &Path, writable: bool) -> Result<Self> {
         let mut flags = OpenFlags::SQLITE_OPEN_NO_MUTEX;
         flags |= if writable {
             OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -159,9 +175,10 @@ impl Store {
         let conn = Connection::open_with_flags(path, flags)?;
         configure(&conn, writable)?;
         let not_vault = || StoreError::Integrity("the file is not a MaxonKey vault".into());
-        let application_id: i32 = conn
-            .pragma_query_value(None, "application_id", |row| row.get(0))
-            .map_err(|_| not_vault())?;
+        // Errors pass through: "not a database" still maps to an integrity failure (exit 4)
+        // in `VaultError`, while a pending crash recovery stays recognizable above.
+        let application_id: i32 =
+            conn.pragma_query_value(None, "application_id", |row| row.get(0))?;
         if application_id != APPLICATION_ID {
             return Err(not_vault());
         }
@@ -265,6 +282,7 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        fault::point(fault::BEGUN)?;
         let current: Vec<u8> =
             tx.query_row("SELECT blob FROM manifest WHERE singleton = 1", [], |row| {
                 row.get(0)
@@ -274,6 +292,7 @@ impl Store {
                 "the vault was changed by another process; run the command again".into(),
             ));
         }
+        fault::point(fault::CHECKED)?;
         let changed = match change {
             Change::Put(record) => tx.execute(
                 "INSERT INTO records (record_id, meta_blob, value_blob) VALUES (?1, ?2, ?3)
@@ -288,12 +307,22 @@ impl Store {
         if changed != 1 {
             return Err(StoreError::Integrity("record to change is missing".into()));
         }
+        fault::point(fault::RECORD_WRITTEN)?;
         tx.execute(
             "UPDATE manifest SET blob = ?1 WHERE singleton = 1",
             params![new_manifest],
         )?;
+        fault::point(fault::MANIFEST_WRITTEN)?;
         tx.commit()?;
+        fault::point(fault::COMMITTED)?;
         Ok(())
+    }
+
+    /// Test only: a tiny page cache makes SQLite write changed pages to the vault file
+    /// before commit, so an interrupted write must be undone from the rollback journal.
+    #[cfg(test)]
+    pub fn spill_early(&self) {
+        self.conn.pragma_update(None, "cache_size", 1).unwrap();
     }
 
     /// Replaces one key slot atomically. Fails if the header changed since unlock.
@@ -313,6 +342,47 @@ impl Store {
         }
         insert_slot(&tx, slot)?;
         tx.commit()?;
+        Ok(())
+    }
+}
+
+/// Failure injection between the statements of a write (ST-09). In normal builds every
+/// point is a no-op; tests install a hook that can stop the write at a chosen point.
+pub mod fault {
+    use super::Result;
+    #[cfg(test)]
+    use super::StoreError;
+
+    pub const BEGUN: u8 = 0;
+    pub const CHECKED: u8 = 1;
+    pub const RECORD_WRITTEN: u8 = 2;
+    pub const MANIFEST_WRITTEN: u8 = 3;
+    pub const COMMITTED: u8 = 4;
+    #[cfg(test)]
+    pub const ALL: [u8; 5] = [BEGUN, CHECKED, RECORD_WRITTEN, MANIFEST_WRITTEN, COMMITTED];
+
+    #[cfg(test)]
+    type Hook = Box<dyn FnMut(u8) -> bool>;
+
+    #[cfg(test)]
+    thread_local! {
+        static HOOK: std::cell::RefCell<Option<Hook>> = const { std::cell::RefCell::new(None) };
+    }
+
+    /// Test only: `hook(point)` returning true fails the write at that point.
+    #[cfg(test)]
+    pub fn install(hook: Option<Hook>) {
+        HOOK.with(|slot| *slot.borrow_mut() = hook);
+    }
+
+    #[cfg_attr(not(test), allow(unused_variables))]
+    pub fn point(point: u8) -> Result<()> {
+        #[cfg(test)]
+        if HOOK.with(|slot| slot.borrow_mut().as_mut().is_some_and(|hook| hook(point))) {
+            return Err(StoreError::Integrity(format!(
+                "injected failure at point {point}"
+            )));
+        }
         Ok(())
     }
 }

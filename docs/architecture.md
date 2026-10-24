@@ -153,7 +153,7 @@ manifest, re-wrap all slots, all in one transaction.
 
 | Situation | Behaviour |
 | --- | --- |
-| Crash or power loss during a write | SQLite rollback journal restores the last committed state. |
+| Crash or power loss during a write | SQLite rollback journal restores the last committed state at the next open. A read-only open (`vault status`, `maxonkey status`, the TUI) that finds such a journal opens read-write once so SQLite can apply it; nothing else is written. |
 | `quick_check` fails, wrong `application_id`, not a database | Refuse to open (exit 4) without modifying the file. **(002C)** `vault verify` and restore guidance. Never auto-repair or drop data. |
 | Key slot fails to authenticate | Single generic message: wrong passphrase or damaged vault. |
 | Manifest or record fails to authenticate, or digest mismatch | Refuse to unlock (exit 4) and report the number of damaged and missing records (no names). **(002C)** restore guidance with `vault verify`/`restore`. |
