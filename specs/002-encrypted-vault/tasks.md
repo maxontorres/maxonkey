@@ -38,10 +38,10 @@
 | ST-20 | `vault::tests::unknown_versions_and_foreign_files_are_refused` | Pass |
 | SC-002 | `vault_pty.py` median unlock 0.64 s on the Linux dev container | Linux measured; Windows runner not measured (no Windows terminal test) |
 
-## 002C — Secrets, integrity manifest, backups (next)
+## 002C — Secrets, integrity manifest, backups (in progress)
 
-- [ ] T101 Add `sha2 =0.11.1`; record blob layouts and AAD (purpose 3); manifest entries with digests
-- [ ] T102 In-memory metadata index; `secret set|get|list|delete` (FR-003, SR-020–SR-023)
+- [x] T101 Add `sha2 =0.11.1`; record blob layouts and AAD (purpose 3); manifest entries with digests
+- [x] T102 In-memory metadata index; `secret set|get|list|delete` (FR-003, SR-020–SR-023)
 - [ ] T103 Transactional writes updating records and manifest (SR-012); crash-injection tests (ST-09)
 - [ ] T104 `vault rotate-key` (ST-18)
 - [ ] T105 `vault backup|verify|restore`, automatic backups before migration/restore (ST-16)

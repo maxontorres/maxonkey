@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](spec.md) · **Design**: [architecture](../../docs/architecture.md#vault-architecture-task-002),
 [ADR 0001](../../docs/adr/0001-key-custody-and-storage.md), [security model](../../docs/security.md)
-**Status**: 002B implemented; 002C next.
+**Status**: 002B implemented; 002C in progress (records and `secret` commands done).
 
 ## Technical context
 
@@ -13,7 +13,7 @@
   `getrandom`, `zeroize` (`derive`), `rusqlite` (`bundled`), `directories`, `tempfile`,
   `rpassword`, `unicode-normalization`, `data-encoding`; `libc` on Linux and `windows-sys`
   (`Win32_Foundation`, `Win32_Security`, `Win32_Security_Authorization`,
-  `Win32_System_SystemServices`) on Windows. `sha2` is added in 002C.
+  `Win32_System_SystemServices`) on Windows. `sha2` (default features off) was added in 002C.
 - APIs were read from the published sources of those exact versions before use.
 
 ## Key implementation choices

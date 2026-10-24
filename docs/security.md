@@ -2,8 +2,9 @@
 
 **Status**: Approved by the owner on 2026-10-19. Task 002B implements the key hierarchy,
 passphrase and recovery-key slots, vault file integrity checks, terminal-only credential
-input, memory wiping, and Linux process hardening. Secret storage, records, and backups
-arrive in Task 002C; the broker and MCP in a later task. Statements marked "planned"
+input, memory wiping, and Linux process hardening. Task 002C so far adds encrypted secret
+records with a verified integrity manifest and the `secret` commands; key rotation and
+backups follow, and the broker and MCP come in a later task. Statements marked "planned"
 or "future" do not protect anything yet.
 
 Related: [architecture](architecture.md) · [ADR 0001 — key custody and storage](adr/0001-key-custody-and-storage.md) ·
@@ -11,7 +12,7 @@ Related: [architecture](architecture.md) · [ADR 0001 — key custody and storag
 
 ## Contents
 
-- [Current guarantees (Task 002B)](#current-guarantees-task-002b)
+- [Current guarantees](#current-guarantees)
 - [Confirmed requirements](#confirmed-requirements)
 - [Security goals and non-goals](#security-goals-and-non-goals)
 - [Assets and trust boundaries](#assets-and-trust-boundaries)
@@ -23,10 +24,13 @@ Related: [architecture](architecture.md) · [ADR 0001 — key custody and storag
 - [Platform notes](#platform-notes)
 - [Decisions still open](#decisions-still-open)
 
-## Current guarantees (Task 002B)
+## Current guarantees
 
 MaxonKey can create a vault, change its passphrase, and recover it with the recovery key.
-It cannot store secrets yet. It has no MCP server, clipboard access, telemetry, or
+It stores secrets by project, environment, and name with `maxonkey secret set|get|list|delete`;
+every command asks for the passphrase, verifies every record against the encrypted manifest,
+and locks again before it exits. Values reach standard output only through `secret get`.
+Vault-key rotation, backup, verify, and restore are not implemented yet. It has no MCP server, clipboard access, telemetry, or
 networking. Status output shows `NOT INITIALIZED` or `INITIALIZED (LOCKED)` and never
 claims the vault is unlocked, because no process keeps it open between commands.
 

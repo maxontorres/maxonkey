@@ -3,7 +3,7 @@
 **Feature Branch**: `main` (owner-directed for the initial project phase)
 **Created**: 2026-10-19
 **Status**: Approved by the owner on 2026-10-19 (all decisions D1–D17 as recommended).
-Task 002B implemented; Task 002C pending. Plan: [plan.md](plan.md) · Tasks: [tasks.md](tasks.md)
+Task 002B implemented; Task 002C in progress (T101–T102 done). Plan: [plan.md](plan.md) · Tasks: [tasks.md](tasks.md)
 **Input**: Design the encrypted local vault (storage, cryptography, key custody, lifecycle,
 integrity, backup, platform security, future broker, AI-agent threats) before implementation.
 
