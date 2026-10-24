@@ -3,7 +3,7 @@
 //! Passphrases and recovery keys are read from `/dev/tty` (Unix) or `CONIN$` (Windows),
 //! never from arguments, environment variables, or standard input.
 
-use std::io::{self, Write};
+use std::io::{self, BufRead, Read, Write};
 
 use zeroize::Zeroizing;
 
@@ -54,4 +54,47 @@ pub fn to_terminal(text: &str) -> Result<(), VaultError> {
         .write_all(text.as_bytes())
         .map_err(terminal_error)?;
     terminal.flush().map_err(terminal_error)
+}
+
+/// Asks a yes/no question on the terminal (visible input). Only "y" or "yes" confirms.
+pub fn confirm(question: &str) -> Result<bool, VaultError> {
+    #[cfg(unix)]
+    const DEVICE: &str = "/dev/tty";
+    #[cfg(windows)]
+    const DEVICE: &str = "CONIN$";
+    to_terminal(question)?;
+    let input = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(DEVICE)
+        .map_err(terminal_error)?;
+    let mut line = String::new();
+    io::BufReader::new(input)
+        .read_line(&mut line)
+        .map_err(terminal_error)?;
+    let answer = line.trim();
+    Ok(answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes"))
+}
+
+/// Reads a secret value from standard input exactly as given (SR-022), up to `limit` bytes.
+/// The buffer is allocated once, so no unwiped copies are left behind.
+pub fn value_from_stdin(limit: usize) -> Result<Zeroizing<Vec<u8>>, VaultError> {
+    let mut buffer = Zeroizing::new(vec![0u8; limit + 1]);
+    let mut length = 0;
+    let mut stdin = io::stdin().lock();
+    while length <= limit {
+        match stdin.read(&mut buffer[length..]) {
+            Ok(0) => break,
+            Ok(read) => length += read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(VaultError::Io(error)),
+        }
+    }
+    if length > limit {
+        return Err(VaultError::Usage(
+            "the secret value must be between 1 byte and 64 KiB".into(),
+        ));
+    }
+    buffer.truncate(length);
+    Ok(buffer)
 }

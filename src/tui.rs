@@ -208,8 +208,8 @@ fn render(frame: &mut Frame<'_>, app: &App) {
             Line::from("?                      Open Help"),
             Line::from("q / Esc / Ctrl+C       Exit and restore terminal"),
             Line::from(""),
-            Line::from("CLI: help, version, about, status, vault"),
-            Line::from("No animations. Secrets cannot be stored yet."),
+            Line::from("CLI: help, version, about, status, vault, secret"),
+            Line::from("No animations. Secrets are managed in the CLI."),
         ],
         Screen::About => info::ABOUT.lines().map(Line::from).collect(),
     };

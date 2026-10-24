@@ -8,19 +8,20 @@ pub const ABOUT: &str = concat!(
     "\nMaxon Torres Software\n\n",
     "Personal, local-first secrets manager.\n",
     "Windows first; Linux and macOS later.\n\n",
-    "Encrypted vault prototype: setup only.\n",
-    "Secrets cannot be stored yet."
+    "Encrypted vault prototype: stores secrets by\n",
+    "project and environment from the CLI.\n",
+    "Backup, restore, and key rotation are not available yet."
 );
 
-pub const IMPLEMENTED: [&str; 2] = [
+pub const IMPLEMENTED: [&str; 4] = [
     "Vault init / passphrase / recovery",
     "Encryption / SQLite storage",
+    "Secret CRUD (CLI)",
+    "Projects / environments",
 ];
 
-pub const UNAVAILABLE: [&str; 6] = [
-    "Secret CRUD",
-    "Projects / environments",
-    "Backup / restore",
+pub const UNAVAILABLE: [&str; 4] = [
+    "Key rotation / backup / restore",
     "MCP server",
     "MCP owner approval",
     "Secure sharing",
@@ -51,6 +52,6 @@ pub fn status(vault_path: Option<&Path>) -> String {
     if let Some(path) = vault_path {
         output.push_str(&format!("Vault path: {}\n", path.display()));
     }
-    output.push_str("Secrets cannot be stored yet.\n");
+    output.push_str("Secrets are managed with: maxonkey secret --help\n");
     output
 }

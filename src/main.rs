@@ -28,6 +28,12 @@ fn main() -> ExitCode {
                 return ExitCode::from(error.exit_code());
             }
         }
+        Some(Command::Secret(command)) => {
+            if let Err(error) = commands::run_secret(command, cli.vault.as_deref()) {
+                eprintln!("maxonkey: {error}");
+                return ExitCode::from(error.exit_code());
+            }
+        }
         None => {
             if let Err(error) = tui::run(info::vault_line(vault_path.as_deref())) {
                 eprintln!("maxonkey: {error}");

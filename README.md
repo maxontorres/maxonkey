@@ -47,8 +47,9 @@ an online service, or a database credential.
 **Local-first** means the planned application will keep its primary data on your
 computer and work without an internet connection. An **encrypted vault** is a
 protected file whose contents can only be read with your **master passphrase**
-(a long password only you know). Version 0.1.0 can create and manage that vault,
-but it **cannot store secrets in it yet**.
+(a long password only you know). Version 0.1.0 can create that vault and store,
+list, read, and delete secrets in it from the command line. It has **no backup or
+restore commands yet** and has not had an independent security review.
 
 Version 0.1.0 currently provides two ways to explore the application:
 
@@ -87,20 +88,22 @@ tools described below. If you need a production password manager today, MaxonKey
 | Dashboard, Help, and About screens | Implemented and verified | Navigate with the keyboard and exit cleanly. |
 | Millennium Blue theme and visible keyboard hints | Implemented and verified | Text labels and selection markers accompany color. |
 | Small-terminal handling | Implemented and verified | The full layout needs 64 columns × 22 rows; smaller windows show resize guidance. |
-| Secrets manager as a complete product | Partially implemented | The vault can be created and its passphrase managed. Secrets cannot be stored yet. |
+| Secrets manager as a complete product | Partially implemented | Secrets can be stored and read from the CLI. Backup, restore, key rotation, and the TUI secret browser are not available. |
 | Encrypted vault creation (`vault init`) | Implemented (Task 002B) | Creates an encrypted vault file protected by your master passphrase and an optional recovery key. |
 | Master-passphrase change and recovery | Implemented (Task 002B) | `vault change-passphrase` and `vault recover`. There is no reset without the passphrase or recovery key. |
 | Encryption and SQLite vault storage | Implemented (Task 002B) | XChaCha20-Poly1305 encryption, Argon2id key derivation, and a bundled SQLite database file. |
-| Secret creation, retrieval, updates, and deletion | Planned; not implemented (Task 002C) | Sometimes called CRUD; none of these operations is available. |
+| Secret creation, retrieval, updates, and deletion | Implemented (Task 002C) | `maxonkey secret set/get/list/delete`, CLI only. Each command asks for the passphrase. |
+| Project and environment organization | Implemented (Task 002C) | Every secret is addressed by project, environment, and name. Projects and environments exist only through their secrets. |
+| Vault-key rotation | Planned; not implemented (Task 002C) | There is no `vault rotate-key` command yet. |
 | Backup, verify, and restore | Planned; not implemented (Task 002C) | Until then, copy the vault file while MaxonKey is not running. |
-| Project and environment organization | Planned; not implemented | There are no project or environment management commands. |
 | Model Context Protocol (MCP) integration | Planned; not implemented | MCP lets coding tools interact with an application; no MCP server exists here. |
 | MCP owner approval | Required for future implementation | Approval must precede plaintext reads, creation, updates, and deletion. |
 | Secure sharing | Future work; not implemented | There are no sharing or multi-user operations. |
 | Precompiled downloads and installers | Planned; unavailable | Build from source using the instructions below. |
-| Production secret management | Unsupported in this version | No secrets can be stored yet, and the vault has not had an independent security review. |
+| Production secret management | Unsupported in this version | There is no built-in backup yet, and the vault has not had an independent security review. |
 
-Task 002B (vault lifecycle) is implemented. Storing secrets arrives with Task 002C.
+Task 002B (vault lifecycle) and the secret commands of Task 002C are implemented. Key
+rotation, backup, verify, and restore are the remaining parts of Task 002C.
 See the [roadmap](#development-roadmap) for the next steps.
 
 ## How it works
@@ -400,15 +403,15 @@ these paths refer to the executable produced by the release build.
    CLI / TUI: IMPLEMENTED
    Vault init / passphrase / recovery: IMPLEMENTED
    Encryption / SQLite storage: IMPLEMENTED
-   Secret CRUD: NOT IMPLEMENTED
-   Projects / environments: NOT IMPLEMENTED
-   Backup / restore: NOT IMPLEMENTED
+   Secret CRUD (CLI): IMPLEMENTED
+   Projects / environments: IMPLEMENTED
+   Key rotation / backup / restore: NOT IMPLEMENTED
    MCP server: NOT IMPLEMENTED
    MCP owner approval: NOT IMPLEMENTED
    Secure sharing: NOT IMPLEMENTED
    Vault: NOT INITIALIZED
    Vault path: /home/you/.local/share/maxonkey/vault.sqlite3
-   Secrets cannot be stored yet.
+   Secrets are managed with: maxonkey secret --help
    ```
 
    `NOT IMPLEMENTED` is the correct result for features that do not exist yet.
@@ -457,6 +460,11 @@ that word with `.\target\release\maxonkey.exe` in PowerShell or
 | `maxonkey vault status` | Show vault details without asking for the passphrase. | Path, format version, key-derivation settings, recovery key, permissions. |
 | `maxonkey vault change-passphrase` | Replace the master passphrase. | Asks for the current passphrase, then the new one twice. |
 | `maxonkey vault recover` | Set a new passphrase using the recovery key. | Asks for the recovery key, then the new passphrase twice. |
+| `maxonkey secret set <PROJECT> <ENVIRONMENT> <NAME>` | Create or update a secret. | Asks for the passphrase, then the value (hidden); `Secret created` or `Secret updated`. |
+| `maxonkey secret set … --stdin` | Read the value from standard input instead. | Stores every byte exactly as given, including any final newline. |
+| `maxonkey secret get <PROJECT> <ENVIRONMENT> <NAME>` | Print a secret's value. | Only the value on standard output (plus a newline when that is a terminal). |
+| `maxonkey secret list [PROJECT [ENVIRONMENT]]` | List secret names, never values. | One `project<TAB>environment<TAB>name` line per secret, sorted. |
+| `maxonkey secret delete <PROJECT> <ENVIRONMENT> <NAME>` | Delete a secret. | Asks for the passphrase, then `y` to confirm (`--yes` skips the question). |
 | `--vault <PATH>` | Use a different vault file with any command. | Useful for testing or a portable vault. |
 
 Examples from the project root on Linux:
@@ -486,7 +494,9 @@ tell whether a command succeeded:
 | 4 | Vault integrity failure: the file is damaged, modified, or not a MaxonKey vault |
 | 5 | No vault exists yet |
 
-There are no secret-management commands in this version.
+An invalid project, environment, or name (empty, over 128 characters, or containing control
+characters) and a value that is empty or larger than 64 KiB are usage errors (exit code 2).
+A secret that does not exist gives exit code 1.
 
 ### Vault setup
 
@@ -507,6 +517,27 @@ shell history. Commands that need the passphrase fail with exit code 1 when no
 interactive terminal is available, for example inside a script or an AI agent tool.
 Each command unlocks the vault, does its work, and locks it again before exiting.
 Unlocking takes about one second on purpose: it makes passphrase guessing slow.
+
+### Storing and reading secrets
+
+Every secret has a **project**, an **environment**, and a **name**, for example `shop`,
+`prod`, and `STRIPE_KEY`. Names are case-sensitive. Every command asks for the master
+passphrase.
+
+```bash
+maxonkey secret set shop prod STRIPE_KEY      # type the value at the hidden prompt
+maxonkey secret list                          # names only, never values
+maxonkey secret get shop prod STRIPE_KEY      # prints the value
+maxonkey secret delete shop prod STRIPE_KEY   # asks you to confirm
+```
+
+- Setting an existing name replaces its value.
+- `secret get` is the only command that prints a value. Once printed, the value is outside
+  MaxonKey's control: it can stay in terminal scrollback or in a file you redirect it to.
+- To store a file or multi-line value, use `--stdin`, for example
+  `maxonkey secret set shop prod TLS_KEY --stdin < key.pem`. Values are never accepted as
+  command options, because those can end up in shell history.
+- Projects, environments, and names are encrypted inside the vault file, like the values.
 
 ## Terminal user interface
 
@@ -614,13 +645,15 @@ can run outside the repository. Copying it does not create or move the vault.
 
 > [!IMPORTANT]
 > MaxonKey 0.1.0 is not production-ready secret-management software.
-> It can create an encrypted vault but cannot store secrets in it yet, and it has
+> It stores secrets in an encrypted vault, but it has no built-in backup yet and it has
 > not had an independent security review.
 
 What is implemented (Task 002B): the vault key is a random 256-bit key wrapped by a
 key derived from your passphrase with Argon2id (256 MiB of memory, 3 passes), and by
-the optional recovery key. Vault data is encrypted with XChaCha20-Poly1305. Changes to the
-encrypted data or key settings are detected at unlock; replacing the whole file with
+the optional recovery key. Secret values and their project, environment, and name are
+encrypted with XChaCha20-Poly1305; an encrypted manifest records a SHA-256 digest of every
+record. Changed, swapped, deleted, added, or rolled-back records and changes to key settings
+are detected at unlock; replacing the whole file with
 an older genuine copy is not. Passphrases are read only from the
 terminal, keys are wiped from memory after use, and on Linux other programs running
 as you cannot attach a debugger to MaxonKey or read its memory through `/proc`.
@@ -813,10 +846,11 @@ and Windows CI results do not substitute for manual Windows TUI testing.
 | The terminal looks broken after forced termination | On Linux, try `stty sane` to restore input, then `reset` to redraw; you may need to type even if characters do not appear. These are system utilities, not MaxonKey commands. On Windows, close and reopen the terminal tab. Normal q/Esc/Ctrl+C exit should restore it automatically. |
 | A copied Linux binary will not start | Confirm it matches the machine architecture and compatible system libraries, and has executable permission. A local source build is the verified path; arbitrary cross-distribution portability is not guaranteed. |
 | The build runs out of memory or disk | Free disk space, close other large applications, and retry. `cargo build --release --locked -j 1` limits parallel compilation at the cost of speed. The hardware recommendations are not measured minimums. |
-| Status says `NOT IMPLEMENTED` | This is expected for features that do not exist yet, such as storing secrets. |
+| Status says `NOT IMPLEMENTED` | This is expected for features that do not exist yet, such as backup and restore. |
 | `cannot use the terminal … reads passphrases only from an interactive terminal` | Run the command directly in a terminal window. Scripts, pipes, editor output panels, and AI agent tools cannot supply a passphrase, by design. |
 | Exit code 3: `wrong passphrase or recovery key` | Check Caps Lock and keyboard layout, then retry. If you have forgotten it, use `maxonkey vault recover` with your recovery key. |
-| Exit code 4: `vault integrity check failed` | The vault file was damaged or modified. Do not delete it. Restore a copy you made earlier; built-in backup arrives in Task 002C. |
+| Exit code 4: `vault integrity check failed` | The vault file was damaged or modified; the message gives the number of damaged and missing records, never their names. Do not delete it. Restore a copy you made earlier; built-in backup arrives later in Task 002C. If the message says another process changed the vault, run the command again. |
+| `no secret with that project, environment, and name` | Check spelling and case with `maxonkey secret list`. |
 | Exit code 5: `no vault at …` | Create one with `maxonkey vault init`, or pass the right file with `--vault <PATH>`. |
 | `a vault already exists` | `vault init` never overwrites a vault. Use the existing one, or pass a different `--vault <PATH>`. |
 | `vault status` shows a permissions warning | Linux: run the `chmod` command it prints. Windows: in the file's Properties → Security, remove Everyone, Users, or Authenticated Users. |
@@ -831,8 +865,10 @@ error output. Remove credentials, tokens, and unrelated private information firs
 
 ### Can I save passwords or API keys now?
 
-Not yet. You can create the encrypted vault and manage its passphrase, but adding,
-reading, and deleting secrets arrives with Task 002C.
+Yes, from the command line: see [storing and reading secrets](#storing-and-reading-secrets).
+There is no built-in backup yet, so copy the vault file somewhere safe while MaxonKey is
+not running, and keep your recovery key. This prototype has not had an independent
+security review.
 
 ### Why must I install Rust if I am not a developer?
 
@@ -865,7 +901,9 @@ no system-wide installation.
 
 ### Can a coding agent access my credentials through MaxonKey?
 
-No. There is no MCP server, and the vault cannot hold secrets yet. Future integration
+Not through MaxonKey itself: there is no MCP server, and every command needs your passphrase
+on the terminal, which an agent cannot type. An agent running as you can still read anything
+you print with `secret get`. Future integration
 must enforce owner approval for plaintext reads, creation, updates, and deletion.
 
 An AI agent running under your computer account can run `maxonkey` like you can, but it
@@ -891,7 +929,7 @@ also removes that clone's source and build files, so preserve any work you want 
 | Task 001B — Documentation | This update: comprehensive beginner guide and permanent documentation standards. Application behavior is unchanged. |
 | Task 002A — Vault security architecture | Complete: threat model, ADR, and specification; all decisions approved by the owner. |
 | Task 002B — Vault lifecycle | Complete: encryption core, `vault init/status/change-passphrase/recover`, tests, and cargo-deny in CI. |
-| Task 002C — Secrets, backup, restore | Next: secret commands, record integrity manifest, key rotation, backup/verify/restore. |
+| Task 002C — Secrets, backup, restore | In progress: secret commands and record integrity manifest done; key rotation and backup/verify/restore next. |
 | Later — Organization and secret operations | Planned work requiring its own specifications and verification. |
 | Later — MCP integration | No server yet. Owner-approval boundaries must be designed and enforced before agent credential access. |
 | Later — Sharing and distribution | Secure sharing, precompiled downloads, installers, and broader platform verification require separate work. |

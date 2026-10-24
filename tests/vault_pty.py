@@ -27,7 +27,7 @@ UNLOCK_LIMIT_SECONDS = 2.0  # Spec 002 SC-002
 class Session:
     """Runs maxonkey with a PTY as its controlling terminal; stdout/stderr are pipes."""
 
-    def __init__(self, binary, args, umask=None, env=None):
+    def __init__(self, binary, args, umask=None, env=None, stdin_bytes=None):
         self.master, slave = pty.openpty()
 
         def child_setup():
@@ -38,7 +38,7 @@ class Session:
 
         self.process = subprocess.Popen(
             [binary, *args],
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL if stdin_bytes is None else subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             preexec_fn=child_setup,
@@ -46,6 +46,10 @@ class Session:
             env=env,
         )
         os.close(slave)
+        if stdin_bytes is not None:
+            self.process.stdin.write(stdin_bytes)
+            self.process.stdin.close()
+            self.process.stdin = None
         self.screen = bytearray()
 
     def expect(self, text, timeout=15):
@@ -168,6 +172,81 @@ def recover(binary, vault, recovery, new):
     assert "Passphrase reset" in stdout
 
 
+SECRET_VALUE = "MK-CANARY-value-" + os.urandom(8).hex()
+FILE_VALUE = ("MK-CANARY-multi\nline-" + os.urandom(8).hex() + "\n").encode()
+SECRET_NAMES = ["MK-CANARY-project", "MK-CANARY-env", "MK-CANARY-NAME", "MK-CANARY-FILE"]
+
+
+def secret_session(binary, vault, passphrase, args, stdin_bytes=None):
+    """Runs one `secret` command that asks for the passphrase; returns the session."""
+    s = Session(binary, ["--vault", vault, "secret", *args], stdin_bytes=stdin_bytes)
+    s.expect("Master passphrase:")
+    s.send(passphrase)
+    return s
+
+
+def secret_flow(binary, vault, passphrase):
+    """US2 end to end with real Argon2id costs; returns the screens and outputs seen."""
+    project, env, name, file_name = SECRET_NAMES
+    seen = []
+
+    s = secret_session(binary, vault, passphrase, ["set", project, env, name])
+    s.expect("Secret value (hidden):")
+    s.send(SECRET_VALUE)
+    code, stdout, stderr = s.finish()
+    assert code == 0 and "Secret created" in stdout, (code, stdout, stderr)
+    screen = bytes(s.screen).decode(errors="replace")
+    assert SECRET_VALUE not in screen + stdout + stderr, "value echoed or printed by set"
+    assert all(n not in stdout + stderr for n in SECRET_NAMES), "names printed by set"
+    seen.append(screen + stdout + stderr)
+
+    s = secret_session(binary, vault, passphrase, ["set", project, env, file_name, "--stdin"],
+                       stdin_bytes=FILE_VALUE)
+    code, stdout, stderr = s.finish()
+    assert code == 0 and "Secret created" in stdout, (code, stdout, stderr)
+    seen.append(stdout + stderr)
+
+    # get: exactly the value, no newline because stdout is a pipe.
+    for secret_name, expected in ((name, SECRET_VALUE.encode()), (file_name, FILE_VALUE)):
+        s = secret_session(binary, vault, passphrase, ["get", project, env, secret_name])
+        code, stdout, stderr = s.finish()
+        assert code == 0, (code, stderr)
+        assert stdout.encode() == expected, "get did not print exactly the stored value"
+
+    s = secret_session(binary, vault, passphrase, ["list"])
+    code, stdout, stderr = s.finish()
+    assert code == 0, (code, stderr)
+    assert stdout == f"{project}\t{env}\t{file_name}\n{project}\t{env}\t{name}\n", stdout
+    assert SECRET_VALUE not in stdout + stderr
+
+    # delete asks for confirmation on the terminal; "n" keeps the secret.
+    s = secret_session(binary, vault, passphrase, ["delete", project, env, file_name])
+    s.expect("[y/N]")
+    s.send("n")
+    code, stdout, stderr = s.finish()
+    assert code == 1 and "cancelled" in stderr, (code, stderr)
+    s = secret_session(binary, vault, passphrase, ["delete", project, env, file_name])
+    s.expect("[y/N]")
+    s.send("y")
+    code, stdout, stderr = s.finish()
+    assert code == 0 and "Secret deleted" in stdout, (code, stdout, stderr)
+    seen.append(stdout + stderr)
+    s = secret_session(binary, vault, passphrase, ["get", project, env, file_name])
+    code, stdout, stderr = s.finish()
+    assert code == 1 and stdout == "" and "no secret" in stderr, (code, stdout, stderr)
+    assert all(n not in stderr for n in SECRET_NAMES), "names in an error message"
+
+    # ST-12: without a controlling terminal the passphrase is never read from stdin.
+    result = subprocess.run(
+        [binary, "--vault", vault, "secret", "get", project, env, name],
+        input=f"{passphrase}\n", capture_output=True, text=True, timeout=60,
+        start_new_session=True,
+    )
+    assert result.returncode == 1 and "interactive terminal" in result.stderr, result
+    assert SECRET_VALUE not in result.stdout + result.stderr
+    return seen
+
+
 def scan_for_canaries(directory, needles):
     for name in os.listdir(directory):
         data = open(os.path.join(directory, name), "rb").read()
@@ -236,9 +315,14 @@ def main():
         assert unlock_attempt(binary, vault, PASS_3)[0] is None
         print("PASS: recover with recovery key")
 
-        # ST-02 (002B part): no credential material in any file.
-        scan_for_canaries(data_dir, [PASS_1, PASS_2, PASS_3, recovery, recovery.replace("-", "")])
-        print("PASS: no passphrase or recovery key material on disk")
+        # US2: secret set/get/list/delete through a real terminal.
+        secret_flow(binary, vault, PASS_3)
+        print("PASS: secret set (prompt and --stdin), get, list, delete with confirmation")
+
+        # ST-02: no credential, value, or name material in any file.
+        scan_for_canaries(data_dir, [PASS_1, PASS_2, PASS_3, recovery, recovery.replace("-", ""),
+                                     SECRET_VALUE, FILE_VALUE.decode(), *SECRET_NAMES])
+        print("PASS: no passphrase, recovery key, value, or name material on disk")
 
         # ST-11 / ST-12: no controlling terminal; stdin and environment are ignored.
         env = dict(os.environ, MAXONKEY_PASSPHRASE=PASS_3)
