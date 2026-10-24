@@ -247,6 +247,32 @@ def secret_flow(binary, vault, passphrase):
     return seen
 
 
+def kill_during_writes(binary, vault, passphrase, unlock_seconds, rounds=12):
+    """ST-09 (Linux): SIGKILL `secret set` at times spread around its write.
+
+    After every kill the vault must still pass `vault status` (read-only) and a full
+    unlock. Returns how many of the killed writes had already committed.
+    """
+    project, env = SECRET_NAMES[0], SECRET_NAMES[1]
+    committed = 0
+    for i in range(rounds):
+        name = f"MK-CANARY-KILL-{i}"
+        s = Session(binary, ["--vault", vault, "secret", "set", project, env, name, "--stdin"],
+                    stdin_bytes=os.urandom(48 * 1024))
+        s.expect("Master passphrase:")
+        s.send(passphrase)
+        time.sleep(unlock_seconds * (0.7 + 0.06 * i))
+        s.process.kill()
+        s.finish()
+        status = run_plain(binary, ["--vault", vault, "vault", "status"])
+        assert status.returncode == 0 and "INITIALIZED (LOCKED)" in status.stdout, (i, status)
+        s = secret_session(binary, vault, passphrase, ["list"])
+        code, stdout, stderr = s.finish()
+        assert code == 0, f"round {i}: vault failed verification after a kill: {code} {stderr}"
+        committed += f"\t{name}\n" in stdout
+    return committed
+
+
 def scan_for_canaries(directory, needles):
     for name in os.listdir(directory):
         data = open(os.path.join(directory, name), "rb").read()
@@ -318,6 +344,11 @@ def main():
         # US2: secret set/get/list/delete through a real terminal.
         secret_flow(binary, vault, PASS_3)
         print("PASS: secret set (prompt and --stdin), get, list, delete with confirmation")
+
+        # ST-09: killing a write at any moment leaves a vault that opens and verifies.
+        committed = kill_during_writes(binary, vault, PASS_3, median)
+        print(f"INFO: {committed} of 12 killed writes had committed before the kill")
+        print("PASS: SIGKILL during secret set never leaves a damaged vault")
 
         # ST-02: no credential, value, or name material in any file.
         scan_for_canaries(data_dir, [PASS_1, PASS_2, PASS_3, recovery, recovery.replace("-", ""),

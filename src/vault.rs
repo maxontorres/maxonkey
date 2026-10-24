@@ -1655,6 +1655,116 @@ mod tests {
         assert!(!text.contains("MK-CANARY"), "{text}");
     }
 
+    /// Everything a user can observe: the generation and every address with its value.
+    fn observed(path: &Path) -> (u64, Vec<(String, Vec<u8>)>) {
+        let vault = open_vault(path);
+        let mut seen = Vec::new();
+        for address in vault.list(None, None) {
+            let value = vault.get(&address).unwrap().expose().to_vec();
+            seen.push((
+                format!(
+                    "{}/{}/{}",
+                    address.project, address.environment, address.name
+                ),
+                value,
+            ));
+        }
+        (vault.generation(), seen)
+    }
+
+    type WriteOp = fn(&mut Unlocked) -> Result<()>;
+
+    /// ST-09: a write that fails or crashes between any two of its statements leaves the
+    /// vault at the previous generation (or the next one once committed), never mixed, and
+    /// the full unlock verification passes.
+    #[test]
+    fn interrupted_writes_leave_a_whole_generation() {
+        let ops: [(&str, WriteOp); 3] = [
+            ("create", |v| {
+                v.set(&at("p", "e", "NEW"), &[0x11; 40_000]).map(drop)
+            }),
+            ("update", |v| {
+                v.set(&at("p", "e", "KEEP"), b"changed").map(drop)
+            }),
+            ("delete", |v| v.delete(&at("p", "e", "GONE"))),
+        ];
+        for (name, op) in ops {
+            for point in store::fault::ALL {
+                let place = format!("{name} interrupted at point {point}");
+                let (dir, path) = new_vault(None);
+                let mut vault = open_vault(&path);
+                vault
+                    .set(&at("p", "e", "KEEP"), &[0x5A; MAX_VALUE_LEN])
+                    .unwrap();
+                vault.set(&at("p", "e", "GONE"), b"to delete").unwrap();
+                drop(vault);
+                let before = observed(&path);
+
+                // At the chosen point, copy the vault and its rollback journal as a crash
+                // would leave them, then fail the write.
+                let crash_dir = dir.path().join("crash");
+                fs::create_dir(&crash_dir).unwrap();
+                let (source, target) = (path.clone(), crash_dir.clone());
+                let mut vault = open_vault(&path);
+                vault.store.spill_early();
+                store::fault::install(Some(Box::new(move |at_point| {
+                    if at_point != point {
+                        return false;
+                    }
+                    for suffix in ["", "-journal"] {
+                        let from = PathBuf::from(format!("{}{suffix}", source.display()));
+                        if from.exists() {
+                            fs::copy(&from, target.join(format!("vault.sqlite3{suffix}"))).unwrap();
+                        }
+                    }
+                    true
+                })));
+                let result = op(&mut vault);
+                store::fault::install(None);
+                drop(vault);
+                assert!(
+                    result.is_err(),
+                    "{place}: the injected failure was not reported"
+                );
+
+                // Two identical crashed copies: one is first opened by `status` (read-only),
+                // the other directly by unlock, so each recovery path is exercised alone.
+                let unlock_dir = dir.path().join("crash-unlock");
+                fs::create_dir(&unlock_dir).unwrap();
+                for entry in fs::read_dir(&crash_dir).unwrap() {
+                    let entry = entry.unwrap();
+                    fs::copy(entry.path(), unlock_dir.join(entry.file_name())).unwrap();
+                }
+                let crashed = crash_dir.join("vault.sqlite3");
+                assert!(
+                    matches!(status(&crashed), Ok(VaultStatus::Initialized { .. })),
+                    "{place}: status of the crashed copy: {:?}",
+                    status(&crashed)
+                );
+                let after = observed(&path);
+                let recovered = observed(&unlock_dir.join("vault.sqlite3"));
+                assert_eq!(
+                    observed(&crashed),
+                    recovered,
+                    "{place}: status and unlock recovered differently"
+                );
+                if point == store::fault::COMMITTED {
+                    assert_eq!(after.0, before.0 + 1, "{place}");
+                    assert_eq!(recovered, after, "{place}");
+                } else {
+                    assert_eq!(
+                        after, before,
+                        "{place}: the failed write was not rolled back"
+                    );
+                    assert_eq!(
+                        recovered, before,
+                        "{place}: the crashed copy did not recover the previous generation"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn errors_never_contain_credentials() {
         let (_dir, path) = new_vault(None);
